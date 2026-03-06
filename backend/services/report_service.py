@@ -490,9 +490,13 @@ class ReportService:
                     WHERE a.detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND a.detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     ORDER BY l.timestamp
                 """
-                rows = db.fetch_all(query, (session_id,))
+                rows = db.fetch_all(query, (session_id, session_id))
             else:
                 rows = db.fetch_all(query)
             if not rows or len(rows) < 2:
@@ -574,11 +578,15 @@ class ReportService:
                     WHERE a.detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND a.detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     GROUP BY l.source
                     ORDER BY count DESC
                     LIMIT 8
                 """
-                rows = db.fetch_all(query, (session_id,))
+                rows = db.fetch_all(query, (session_id, session_id))
             else:
                 rows = db.fetch_all(query)
             if not rows:
@@ -627,10 +635,14 @@ class ReportService:
                     AND detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     GROUP BY mitre_tactic
                     ORDER BY count DESC
                 """
-                rows = db.fetch_all(query, (session_id,))
+                rows = db.fetch_all(query, (session_id, session_id))
             else:
                 rows = db.fetch_all(query)
             if not rows:
@@ -685,9 +697,13 @@ class ReportService:
                 WHERE a.detected_at >= (
                     SELECT start_time FROM analysis_sessions WHERE session_id = ?
                 )
+                AND a.detected_at <= COALESCE(
+                    (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                    CURRENT_TIMESTAMP
+                )
                 ORDER BY a.anomaly_score DESC
             """
-            return db.fetch_all(query, (session_id,))
+            return db.fetch_all(query, (session_id, session_id))
         else:
             query = """
                 SELECT a.id, a.anomaly_score, a.algorithm, a.severity,
@@ -708,9 +724,13 @@ class ReportService:
                 WHERE detected_at >= (
                     SELECT start_time FROM analysis_sessions WHERE session_id = ?
                 )
+                AND detected_at <= COALESCE(
+                    (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                    CURRENT_TIMESTAMP
+                )
                 GROUP BY severity
             """
-            rows = db.fetch_all(query, (session_id,))
+            rows = db.fetch_all(query, (session_id, session_id))
         else:
             query = "SELECT severity, COUNT(*) as count FROM anomalies GROUP BY severity"
             rows = db.fetch_all(query)
@@ -729,8 +749,11 @@ class ReportService:
             if session_id:
                 r = db.fetch_one(
                     "SELECT COUNT(*) as count FROM anomalies WHERE detected_at >= "
-                    "(SELECT start_time FROM analysis_sessions WHERE session_id = ?)",
-                    (session_id,)
+                    "(SELECT start_time FROM analysis_sessions WHERE session_id = ?) "
+                    "AND detected_at <= COALESCE("
+                    "(SELECT end_time FROM analysis_sessions WHERE session_id = ?), "
+                    "CURRENT_TIMESTAMP)",
+                    (session_id, session_id)
                 )
                 metadata['total_anomalies'] = r['count'] if r else 0
                 sess = db.fetch_one(
@@ -770,9 +793,13 @@ class ReportService:
                     WHERE a.detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND a.detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     ORDER BY a.anomaly_score DESC LIMIT ?
                 """
-                return db.fetch_all(query, (session_id, limit))
+                return db.fetch_all(query, (session_id, session_id, limit))
             else:
                 query = """
                     SELECT a.anomaly_score, a.severity, a.mitre_technique_id, a.mitre_tactic,
@@ -800,8 +827,12 @@ class ReportService:
                     WHERE detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     """,
-                    (session_id,)
+                    (session_id, session_id)
                 )
             else:
                 row = db.fetch_one(
@@ -834,11 +865,15 @@ class ReportService:
                     WHERE a.detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND a.detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     GROUP BY l.source
                     ORDER BY count DESC
                     LIMIT ?
                     """,
-                    (session_id, limit),
+                    (session_id, session_id, limit),
                 )
             else:
                 rows = db.fetch_all(
@@ -868,10 +903,14 @@ class ReportService:
                     WHERE detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     GROUP BY algorithm
                     ORDER BY count DESC
                     """,
-                    (session_id,),
+                    (session_id, session_id),
                 )
             else:
                 rows = db.fetch_all(
@@ -899,11 +938,15 @@ class ReportService:
                     AND detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
+                    AND detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
                     GROUP BY mitre_technique_id, mitre_tactic
                     ORDER BY count DESC
                     LIMIT ?
                     """,
-                    (session_id, limit),
+                    (session_id, session_id, limit),
                 )
             else:
                 rows = db.fetch_all(
@@ -984,7 +1027,11 @@ class ReportService:
                     AND detected_at >= (
                         SELECT start_time FROM analysis_sessions WHERE session_id = ?
                     )
-                """, (session_id,))
+                    AND detected_at <= COALESCE(
+                        (SELECT end_time FROM analysis_sessions WHERE session_id = ?),
+                        CURRENT_TIMESTAMP
+                    )
+                """, (session_id, session_id))
             else:
                 return db.fetch_one("""
                     SELECT COUNT(DISTINCT mitre_technique_id) as unique_techniques,

@@ -238,7 +238,7 @@ export default function Terminal() {
       }
       return response.output || "Command completed.";
     } catch {
-      throw new Error(`Command not found: \"${rawCmd}\". Type \"help\" for available commands.`);
+      throw new Error(`Command not found: "${rawCmd}". Type "help" for available commands.`);
     }
   };
 

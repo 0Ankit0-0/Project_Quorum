@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Download, FileArchive, FileJson, FileSpreadsheet, RefreshCw } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
@@ -44,15 +44,15 @@ export default function Reports() {
     [files, selectedFile],
   );
 
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     const data = await getUploadedFiles();
     setFiles(data.files ?? []);
     if (!selectedFile && data.files.length > 0) {
       setSelectedFile(data.files[0].filename);
     }
-  };
+  }, [selectedFile]);
 
-  const loadReports = async (filename: string) => {
+  const loadReports = useCallback(async (filename: string) => {
     if (!filename) {
       setReports([]);
       return;
@@ -72,16 +72,16 @@ export default function Reports() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void loadFiles();
-  }, []);
+  }, [loadFiles]);
 
   useEffect(() => {
     if (!selectedFile) return;
     void loadReports(selectedFile);
-  }, [selectedFile]);
+  }, [loadReports, selectedFile]);
 
   const handleGenerate = async () => {
     if (!selectedFile) return;

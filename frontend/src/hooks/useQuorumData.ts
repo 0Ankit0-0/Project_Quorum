@@ -176,7 +176,13 @@ export const useQuorumData = () => {
   }, [syncFromShared]);
 
   useEffect(() => {
-    void refresh(false);
+    const timer = window.setTimeout(() => {
+      void refresh(false);
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [refresh]);
 
   return { ...data, loading, error, isUsingFallback, refresh };

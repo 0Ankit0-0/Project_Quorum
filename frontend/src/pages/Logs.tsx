@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { CheckCircle, RefreshCw, Upload } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
@@ -47,15 +47,15 @@ export default function Logs() {
     [files, selectedFile],
   );
 
-  const loadFiles = async () => {
+  const loadFiles = useCallback(async () => {
     const result = await getUploadedFiles();
     setFiles(result.files ?? []);
     if (!selectedFile && result.files.length > 0) {
       setSelectedFile(result.files[0].filename);
     }
-  };
+  }, [selectedFile]);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     if (!selectedFile) {
       setLogs([]);
       return;
@@ -67,15 +67,15 @@ export default function Logs() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [query, selectedFile]);
 
   useEffect(() => {
     void loadFiles();
-  }, []);
+  }, [loadFiles]);
 
   useEffect(() => {
     void loadLogs();
-  }, [selectedFile, query]);
+  }, [loadLogs]);
 
   useEffect(() => {
     if (!autoRefresh || !selectedFile) return;
@@ -83,7 +83,7 @@ export default function Logs() {
       void loadLogs();
     }, 4000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, selectedFile, query]);
+  }, [autoRefresh, loadLogs, selectedFile]);
 
   const ingestFile = async (file: File) => {
     setUploading(true);

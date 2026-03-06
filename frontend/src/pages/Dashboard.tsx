@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { Activity, AlertTriangle, FileText, Server, TrendingUp, Zap } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -30,7 +31,7 @@ const StatCard = ({
   sub,
   color = "cyan",
 }: {
-  icon: any;
+  icon: LucideIcon;
   label: string;
   value: string;
   sub?: string;
@@ -64,12 +65,24 @@ const StatCard = ({
   );
 };
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface TooltipItem {
+  name: string;
+  value: string | number;
+  color?: string;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: TooltipItem[];
+  label?: string | number;
+}
+
+const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload?.length) {
     return (
       <div className="cyber-card px-3 py-2 text-xs font-mono">
         <p className="text-muted-foreground mb-1">{label}</p>
-        {payload.map((p: any) => (
+        {payload.map((p) => (
           <p key={p.name} style={{ color: p.color }}>
             {p.name}: {p.value}
           </p>

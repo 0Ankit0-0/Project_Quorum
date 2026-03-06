@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Activity, HardDrive, MemoryStick, Play, Square, Wifi } from "lucide-react";
 import AppLayout from "@/components/layout/AppLayout";
@@ -41,23 +41,23 @@ export default function Monitor() {
   const readOnlySamples = useMemo(() => samples.slice(-30).reverse(), [samples]);
   const readOnlyLogs = useMemo(() => liveLogs.slice(-80).reverse(), [liveLogs]);
 
-  const loadSnapshot = async () => {
+  const loadSnapshot = useCallback(async () => {
     const snap = await getSystemMonitoringSnapshot(120);
     setRunning(Boolean(snap.status?.running));
     setSamples(snap.samples ?? []);
     setEvents(snap.device_events ?? []);
-  };
+  }, []);
 
-  const startPollingFallback = () => {
+  const startPollingFallback = useCallback(() => {
     if (fallbackTimerRef.current) {
       window.clearInterval(fallbackTimerRef.current);
     }
     fallbackTimerRef.current = window.setInterval(() => {
       void loadSnapshot();
     }, 1000);
-  };
+  }, [loadSnapshot]);
 
-  const connectWs = () => {
+  const connectWs = useCallback(() => {
     try {
       wsRef.current?.close();
       const base = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -87,9 +87,9 @@ export default function Monitor() {
     } catch {
       startPollingFallback();
     }
-  };
+  }, [startPollingFallback]);
 
-  const connectLogStream = () => {
+  const connectLogStream = useCallback(() => {
     try {
       logStreamRef.current?.close();
       if (logRetryRef.current) {
@@ -159,7 +159,7 @@ export default function Monitor() {
         connectLogStream();
       }, 1500);
     }
-  };
+  }, []);
 
   useEffect(() => {
     const init = async () => {
@@ -194,7 +194,7 @@ export default function Monitor() {
         window.clearTimeout(logRetryRef.current);
       }
     };
-  }, []);
+  }, [connectLogStream, connectWs, loadSnapshot]);
 
   const handleStart = async () => {
     setConnecting(true);
