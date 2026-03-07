@@ -111,7 +111,7 @@ class ReportService:
         output_path: Optional[Path] = None,
         include_graphs: bool = True
     ) -> Path:
-        """Generate PDF report with multiple graphs into session folder"""
+        """Generate a structured, branded PDF threat-analysis report."""
         logger.info(f"Generating PDF report for session: {session_id or 'all'}")
 
         try:
@@ -119,308 +119,541 @@ class ReportService:
             from reportlab.lib.units import inch
             from reportlab.lib import colors
             from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.enums import TA_CENTER, TA_LEFT
             from reportlab.platypus import (
                 SimpleDocTemplate, Table, TableStyle, Paragraph,
-                Spacer, PageBreak, Image
+                Spacer, PageBreak, Image, HRFlowable, KeepTogether,
             )
-            from reportlab.lib.enums import TA_CENTER
 
-            # Determine output path
+            # ── Output path ───────────────────────────────────────────
             if not output_path:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"threat_report_{timestamp}.pdf"
-                if session_id:
-                    output_path = self._get_session_dir(session_id) / filename
-                else:
-                    output_path = self.reports_dir / filename
-
+                output_path = (
+                    self._get_session_dir(session_id) if session_id
+                    else self.reports_dir
+                ) / filename
             output_path = Path(output_path)
 
+            # ── Colour palette ────────────────────────────────────────
+            NAVY        = colors.HexColor('#0f172a')
+            NAVY_MID    = colors.HexColor('#1e293b')
+            ACCENT      = colors.HexColor('#0ea5e9')
+            ACCENT_LT   = colors.HexColor('#e0f2fe')
+            ROW_ALT     = colors.HexColor('#f8fafc')
+            GRAY_100    = colors.HexColor('#f1f5f9')
+            GRAY_300    = colors.HexColor('#cbd5e1')
+            GRAY_500    = colors.HexColor('#64748b')
+            GRAY_700    = colors.HexColor('#334155')
+            WHITE       = colors.white
+            C_CRITICAL  = colors.HexColor('#fef2f2')
+            C_HIGH      = colors.HexColor('#fff7ed')
+            C_MEDIUM    = colors.HexColor('#fefce8')
+            C_LOW       = colors.HexColor('#f0fdf4')
+            T_CRITICAL  = colors.HexColor('#dc2626')
+            T_HIGH      = colors.HexColor('#ea580c')
+            T_MEDIUM    = colors.HexColor('#ca8a04')
+            T_LOW       = colors.HexColor('#16a34a')
+            PAGE_W, PAGE_H = letter
+
+            # ── Styles ────────────────────────────────────────────────
+            _ss = getSampleStyleSheet()
+
+            def _ps(name, **kw):
+                parent = _ss.get(kw.pop('parent', 'Normal'), _ss['Normal'])
+                base = dict(fontName='Helvetica', fontSize=9, textColor=GRAY_700)
+                base.update(kw)
+                return ParagraphStyle(name, parent=parent, **base)
+
+            cover_brand = _ps('CoverBrand', fontSize=11, fontName='Helvetica-Bold',
+                               textColor=ACCENT, spaceAfter=6, alignment=TA_CENTER)
+            cover_title = _ps('CoverTitle', fontSize=26, fontName='Helvetica-Bold',
+                               textColor=NAVY, spaceAfter=6, alignment=TA_CENTER, leading=32)
+            cover_sub   = _ps('CoverSub', fontSize=9, textColor=GRAY_500,
+                               spaceAfter=3, alignment=TA_CENTER)
+            caption     = _ps('Caption', fontSize=8, textColor=GRAY_500,
+                               alignment=TA_CENTER, spaceAfter=2)
+            body_style  = _ps('Body', parent='BodyText', fontSize=9,
+                               textColor=GRAY_700, leading=13)
+            h2_style    = _ps('SH2', fontSize=11, fontName='Helvetica-Bold',
+                               textColor=NAVY, spaceBefore=2, spaceAfter=4, leading=14)
+
+            # ── Helpers ───────────────────────────────────────────────
+            def _section(title: str):
+                """Accent-bar section heading (cyan left border)."""
+                inner = Table([[Paragraph(title, h2_style)]], colWidths=[6.5 * inch])
+                inner.setStyle(TableStyle([
+                    ('LINEBEFORE', (0, 0), (0, -1), 3, ACCENT),
+                    ('LEFTPADDING',  (0, 0), (-1, -1), 8),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                    ('TOPPADDING',   (0, 0), (-1, -1), 3),
+                    ('BOTTOMPADDING',(0, 0), (-1, -1), 3),
+                ]))
+                return inner
+
+            def _alt_rows(n: int, start: int = 1) -> list:
+                """Alternating-row background commands."""
+                cmds = []
+                for i in range(start, n):
+                    cmds.append(('BACKGROUND', (0, i), (-1, i),
+                                  ROW_ALT if i % 2 == 0 else WHITE))
+                return cmds
+
+            def _std_header_cmds():
+                return [
+                    ('BACKGROUND',   (0, 0), (-1, 0), NAVY),
+                    ('TEXTCOLOR',    (0, 0), (-1, 0), WHITE),
+                    ('FONTNAME',     (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('ALIGN',        (0, 0), (-1, 0), 'CENTER'),
+                    ('FONTNAME',     (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE',     (0, 0), (-1, -1), 9),
+                    ('GRID',         (0, 0), (-1, -1), 0.35, GRAY_300),
+                    ('BOX',          (0, 0), (-1, -1), 1, NAVY_MID),
+                    ('VALIGN',       (0, 0), (-1, -1), 'MIDDLE'),
+                    ('TOPPADDING',   (0, 0), (-1, -1), 6),
+                    ('BOTTOMPADDING',(0, 0), (-1, -1), 6),
+                ]
+
+            # ── Fetch data ────────────────────────────────────────────
+            metadata       = self._get_report_metadata(session_id)
+            severity       = self._query_severity_distribution(session_id)
+            score_stats    = self._get_score_stats(session_id)
+            top_sources    = self._get_top_sources(session_id, limit=8)
+            algorithm_dist = self._get_algorithm_distribution(session_id)
+            risk_level, risk_index = self._calculate_risk_index(severity)
+            top_anomalies  = self._get_top_anomalies(session_id, limit=20)
+            top_techniques = self._get_top_mitre_techniques(session_id, limit=10)
+            mitre_summary  = self._get_mitre_summary(session_id)
+            sev_total      = max(sum(severity.values()), 1)
+            anomaly_rate   = (
+                f"{(metadata['total_anomalies'] / metadata['total_logs'] * 100):.2f}%"
+                if metadata['total_logs'] else "0.00%"
+            )
+
+            # ── Running header/footer canvas callback ─────────────────
+            def _draw_page(canvas, doc, show_header: bool = True):
+                canvas.saveState()
+                if show_header:
+                    # Navy top band
+                    canvas.setFillColor(NAVY)
+                    canvas.rect(0, PAGE_H - 0.48 * inch, PAGE_W, 0.48 * inch,
+                                fill=1, stroke=0)
+                    # Accent underline
+                    canvas.setStrokeColor(ACCENT)
+                    canvas.setLineWidth(1.5)
+                    canvas.line(0, PAGE_H - 0.5 * inch, PAGE_W, PAGE_H - 0.5 * inch)
+                    # Header text
+                    canvas.setFillColor(WHITE)
+                    canvas.setFont('Helvetica-Bold', 8)
+                    canvas.drawString(0.75 * inch, PAGE_H - 0.3 * inch,
+                                      'QUORUM  ·  Threat Analysis Report')
+                    canvas.setFont('Helvetica', 7.5)
+                    canvas.drawRightString(PAGE_W - 0.75 * inch, PAGE_H - 0.3 * inch,
+                                           metadata.get('generated_at', ''))
+                # Footer rule
+                canvas.setStrokeColor(GRAY_300)
+                canvas.setLineWidth(0.5)
+                canvas.line(0.75 * inch, 0.58 * inch,
+                            PAGE_W - 0.75 * inch, 0.58 * inch)
+                canvas.setFont('Helvetica', 7)
+                canvas.setFillColor(GRAY_500)
+                canvas.drawString(0.75 * inch, 0.36 * inch,
+                                  'CONFIDENTIAL — For authorized personnel only')
+                if show_header:
+                    canvas.drawRightString(PAGE_W - 0.75 * inch, 0.36 * inch,
+                                           f'Page {doc.page}')
+                canvas.restoreState()
+
+            # ── Document ──────────────────────────────────────────────
             doc = SimpleDocTemplate(
                 str(output_path),
                 pagesize=letter,
                 rightMargin=0.75 * inch,
                 leftMargin=0.75 * inch,
-                topMargin=1 * inch,
-                bottomMargin=0.75 * inch
+                topMargin=0.8 * inch,
+                bottomMargin=0.75 * inch,
             )
-
             elements = []
-            styles = getSampleStyleSheet()
 
-            title_style = ParagraphStyle(
-                'Title',
-                parent=styles['Heading1'],
-                fontSize=22,
-                textColor=colors.HexColor('#1a1a2e'),
-                spaceAfter=20,
-                alignment=TA_CENTER
-            )
-            h2_style = ParagraphStyle(
-                'H2',
-                parent=styles['Heading2'],
-                fontSize=14,
-                textColor=colors.HexColor('#16213e'),
-                spaceBefore=16,
-                spaceAfter=8
-            )
-            body_style = ParagraphStyle(
-                'Body',
-                parent=styles['BodyText'],
-                fontSize=10,
-                leading=14
-            )
-
-            elements.append(Paragraph("Quorum Threat Analysis Report", title_style))
-            elements.append(Spacer(1, 0.15 * inch))
-
-            # Metadata table
-            metadata = self._get_report_metadata(session_id)
-            meta_rows = [
-                ['Report Generated:', metadata['generated_at']],
-                ['Analysis Period:', metadata['analysis_period']],
-                ['Total Logs Analyzed:', str(metadata['total_logs'])],
-                ['Anomalies Detected:', str(metadata['total_anomalies'])],
-            ]
-            if session_id:
-                meta_rows.append(['Session ID:', session_id])
-
-            meta_table = Table(meta_rows, colWidths=[2 * inch, 4.5 * inch])
-            meta_table.setStyle(TableStyle([
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('TEXTCOLOR', (0, 0), (0, -1), colors.HexColor('#666666')),
-                ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            ]))
-            elements.append(meta_table)
-            elements.append(Spacer(1, 0.2 * inch))
-
-            # Executive Summary
-            elements.append(Paragraph("Executive Summary", h2_style))
-            summary_text = self._generate_summary(metadata)
-            elements.append(Paragraph(summary_text, body_style))
-            elements.append(Spacer(1, 0.12 * inch))
-
-            severity = self._query_severity_distribution(session_id)
-            score_stats = self._get_score_stats(session_id)
-            top_sources = self._get_top_sources(session_id, limit=5)
-            algorithm_dist = self._get_algorithm_distribution(session_id)
-            risk_level, risk_index = self._calculate_risk_index(severity)
-
-            key_rows = [
-                ["Risk Level", risk_level, "Risk Index (0-100)", f"{risk_index}"],
-                [
-                    "Avg Threat Score",
-                    f"{score_stats['avg_score']:.3f}",
-                    "Max Threat Score",
-                    f"{score_stats['max_score']:.3f}",
-                ],
-                [
-                    "Critical + High",
-                    str(severity.get('CRITICAL', 0) + severity.get('HIGH', 0)),
-                    "Anomaly Rate",
-                    f"{((metadata['total_anomalies'] / metadata['total_logs']) * 100):.2f}%" if metadata['total_logs'] else "0.00%",
-                ],
-            ]
-            key_table = Table(key_rows, colWidths=[1.4 * inch, 1.8 * inch, 1.6 * inch, 1.2 * inch])
-            key_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f5f7fb')),
-                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cfd8e3')),
-                ('GRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#d9e1ec')),
-                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
-                ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#1b2a41')),
-                ('ALIGN', (1, 0), (1, -1), 'CENTER'),
-                ('ALIGN', (3, 0), (3, -1), 'CENTER'),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]))
-            elements.append(Paragraph("Key Risk Indicators", h2_style))
-            elements.append(key_table)
+            # ════════════════════════════════════════════════════════
+            # 1. COVER PAGE
+            # ════════════════════════════════════════════════════════
+            elements.append(Spacer(1, 1.2 * inch))
+            elements.append(Paragraph('QUORUM', cover_brand))
+            elements.append(Paragraph('Threat Analysis Report', cover_title))
             elements.append(Spacer(1, 0.1 * inch))
+            elements.append(HRFlowable(width='55%', color=ACCENT,
+                                        thickness=1.5, hAlign='CENTER'))
+            elements.append(Spacer(1, 0.25 * inch))
 
-            if include_graphs:
-                # 1. Severity bar chart
-                chart1 = self._create_severity_bar_chart(session_id)
-                if chart1:
-                    elements.append(Paragraph("Threat Severity Distribution", h2_style))
-                    elements.append(Image(chart1, width=5.5 * inch, height=2.8 * inch))
-                    elements.append(Spacer(1, 0.2 * inch))
+            if session_id:
+                elements.append(Paragraph(f'Session: {session_id[:20]}', cover_sub))
+            elements.append(Paragraph(f'Generated: {metadata["generated_at"]}', cover_sub))
+            elements.append(Paragraph(f'Period: {metadata["analysis_period"]}', cover_sub))
+            elements.append(Spacer(1, 0.7 * inch))
 
-                # 2. Anomaly score timeline
-                chart2 = self._create_score_timeline(session_id)
-                if chart2:
-                    elements.append(Paragraph("Anomaly Score Timeline", h2_style))
-                    elements.append(Image(chart2, width=5.5 * inch, height=2.8 * inch))
-                    elements.append(Spacer(1, 0.2 * inch))
+            # Cover KPI stat boxes
+            risk_tc = T_CRITICAL if risk_level == 'HIGH' else (
+                T_MEDIUM if risk_level == 'MEDIUM' else T_LOW)
 
-                # 3. Top sources pie chart
-                chart3 = self._create_source_pie_chart(session_id)
-                if chart3:
-                    elements.append(Paragraph("Anomalies by Source", h2_style))
-                    elements.append(Image(chart3, width=4.5 * inch, height=3 * inch))
-                    elements.append(Spacer(1, 0.2 * inch))
+            def _kpi(val, lbl, tc):
+                return [
+                    Paragraph(str(val),
+                               _ps(f'kv_{lbl}', fontSize=20, fontName='Helvetica-Bold',
+                                   textColor=tc, alignment=TA_CENTER)),
+                    Paragraph(lbl, caption),
+                ]
 
-                # 4. MITRE tactic distribution
-                chart4 = self._create_mitre_bar_chart(session_id)
-                if chart4:
-                    elements.append(Paragraph("MITRE ATT&CK Tactic Distribution", h2_style))
-                    elements.append(Image(chart4, width=5.5 * inch, height=2.8 * inch))
-                    elements.append(Spacer(1, 0.2 * inch))
-
-            elements.append(Paragraph("Detection Breakdown", h2_style))
-            sev_total = max(sum(severity.values()), 1)
-            sev_rows = [["Severity", "Count", "Percent"]]
-            for sev in ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']:
-                cnt = severity.get(sev, 0)
-                sev_rows.append([sev, str(cnt), f"{(cnt / sev_total) * 100:.1f}%"])
-            sev_table = Table(sev_rows, colWidths=[1.6 * inch, 1.3 * inch, 1.3 * inch])
-            sev_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#203a43')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cad4df')),
-                ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
+            cover_kpi = Table(
+                [
+                    [
+                        _kpi(f"{metadata['total_logs']:,}", 'Logs Analyzed', ACCENT)[0],
+                        _kpi(f"{metadata['total_anomalies']:,}", 'Anomalies', T_CRITICAL)[0],
+                        _kpi(str(risk_index), f'Risk Index ({risk_level})', risk_tc)[0],
+                        _kpi(f"{score_stats['avg_score']:.3f}", 'Avg Score', GRAY_700)[0],
+                    ],
+                    [
+                        Paragraph('Logs Analyzed', caption),
+                        Paragraph('Anomalies', caption),
+                        Paragraph(f'Risk Index ({risk_level})', caption),
+                        Paragraph('Avg Score', caption),
+                    ],
+                ],
+                colWidths=[1.625 * inch] * 4,
+            )
+            cover_kpi.setStyle(TableStyle([
+                ('BACKGROUND',   (0, 0), (-1, -1), GRAY_100),
+                ('BOX',          (0, 0), (-1, -1), 1,   GRAY_300),
+                ('INNERGRID',    (0, 0), (-1, -1), 0.5, GRAY_300),
+                ('VALIGN',       (0, 0), (-1, -1), 'MIDDLE'),
+                ('TOPPADDING',   (0, 0), (-1, 0),  14),
+                ('BOTTOMPADDING',(0, 0), (-1, 0),  4),
+                ('TOPPADDING',   (0, 1), (-1, 1),  2),
+                ('BOTTOMPADDING',(0, 1), (-1, 1),  12),
             ]))
-            elements.append(sev_table)
+            elements.append(cover_kpi)
+            elements.append(Spacer(1, 1.4 * inch))
+
+            # Classification badge
+            badge_data = [[
+                Paragraph('CONFIDENTIAL  ·  AIR-GAPPED ENVIRONMENT',
+                           _ps('badge', fontSize=8, fontName='Helvetica-Bold',
+                               textColor=WHITE, alignment=TA_CENTER))
+            ]]
+            badge = Table(badge_data, colWidths=[4 * inch])
+            badge.setStyle(TableStyle([
+                ('BACKGROUND',   (0, 0), (-1, -1), NAVY_MID),
+                ('TOPPADDING',   (0, 0), (-1, -1), 7),
+                ('BOTTOMPADDING',(0, 0), (-1, -1), 7),
+                ('ALIGN',        (0, 0), (-1, -1), 'CENTER'),
+            ]))
+            elements.append(badge)
+            elements.append(PageBreak())
+
+            # ════════════════════════════════════════════════════════
+            # 2. EXECUTIVE SUMMARY
+            # ════════════════════════════════════════════════════════
+            elements.append(_section('Executive Summary'))
+            elements.append(Spacer(1, 0.06 * inch))
+            sum_box = Table(
+                [[Paragraph(self._generate_summary(metadata), body_style)]],
+                colWidths=[6.5 * inch],
+            )
+            sum_box.setStyle(TableStyle([
+                ('BACKGROUND',   (0, 0), (-1, -1), ACCENT_LT),
+                ('BOX',          (0, 0), (-1, -1), 0.75, ACCENT),
+                ('LEFTPADDING',  (0, 0), (-1, -1), 12),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ('TOPPADDING',   (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING',(0, 0), (-1, -1), 10),
+            ]))
+            elements.append(sum_box)
+            elements.append(Spacer(1, 0.18 * inch))
+
+            # ════════════════════════════════════════════════════════
+            # 3. KEY RISK INDICATORS
+            # ════════════════════════════════════════════════════════
+            elements.append(_section('Key Risk Indicators'))
+            elements.append(Spacer(1, 0.06 * inch))
+            kri_rows = [
+                ['Metric', 'Value', 'Metric', 'Value'],
+                ['Risk Level', risk_level,
+                 'Risk Index (0–100)', str(risk_index)],
+                ['Avg Threat Score', f"{score_stats['avg_score']:.3f}",
+                 'Max Threat Score', f"{score_stats['max_score']:.3f}"],
+                ['Critical + High',
+                 str(severity.get('CRITICAL', 0) + severity.get('HIGH', 0)),
+                 'Anomaly Rate', anomaly_rate],
+                ['Total Anomalies', str(metadata['total_anomalies']),
+                 'Logs Analyzed', f"{metadata['total_logs']:,}"],
+            ]
+            kri_table = Table(kri_rows, colWidths=[1.7*inch, 1.5*inch, 1.8*inch, 1.5*inch])
+            kri_cmds = _std_header_cmds() + _alt_rows(len(kri_rows)) + [
+                ('FONTNAME', (0, 1), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (2, 1), (2, -1), 'Helvetica-Bold'),
+                ('TEXTCOLOR',(0, 1), (-1, -1), GRAY_700),
+                ('ALIGN',    (1, 1), (1, -1), 'CENTER'),
+                ('ALIGN',    (3, 1), (3, -1), 'CENTER'),
+            ]
+            kri_table.setStyle(TableStyle(kri_cmds))
+            elements.append(KeepTogether(kri_table))
+            elements.append(Spacer(1, 0.18 * inch))
+
+            # ════════════════════════════════════════════════════════
+            # 4. VISUAL ANALYTICS (charts)
+            # ════════════════════════════════════════════════════════
+            if include_graphs:
+                chart1 = self._create_severity_bar_chart(session_id)
+                chart2 = self._create_score_timeline(session_id)
+                chart3 = self._create_source_pie_chart(session_id)
+                chart4 = self._create_mitre_bar_chart(session_id)
+
+                elements.append(_section('Visual Analytics'))
+                elements.append(Spacer(1, 0.08 * inch))
+
+                # Severity bar + Source pie — side by side
+                if chart1 or chart3:
+                    cells = []
+                    capts = []
+                    if chart1:
+                        cells.append(Image(chart1, width=3.15 * inch, height=2.4 * inch))
+                        capts.append(Paragraph('Severity Distribution', caption))
+                    if chart3:
+                        cells.append(Image(chart3, width=3.15 * inch, height=2.4 * inch))
+                        capts.append(Paragraph('Anomalies by Source', caption))
+
+                    n = len(cells)
+                    side_w = 6.5 / n * inch
+                    chart_row = Table([cells], colWidths=[side_w] * n)
+                    capt_row  = Table([capts], colWidths=[side_w] * n)
+                    for t in (chart_row, capt_row):
+                        t.setStyle(TableStyle([
+                            ('ALIGN',  (0, 0), (-1, -1), 'CENTER'),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('LEFTPADDING',  (0, 0), (-1, -1), 2),
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                        ]))
+                    elements.append(chart_row)
+                    elements.append(capt_row)
+                    elements.append(Spacer(1, 0.12 * inch))
+
+                # Score timeline — full width
+                if chart2:
+                    elements.append(Image(chart2, width=6.5 * inch, height=2.8 * inch))
+                    elements.append(Paragraph('Anomaly Score Timeline', caption))
+                    elements.append(Spacer(1, 0.12 * inch))
+
+                # MITRE tactic bar — full width, dynamic height
+                if chart4:
+                    h = max(2.0, min(4.0, len(top_techniques or []) * 0.38 + 1.0))
+                    elements.append(Image(chart4, width=6.5 * inch, height=h * inch))
+                    elements.append(Paragraph('MITRE ATT&CK Tactic Distribution', caption))
+                    elements.append(Spacer(1, 0.12 * inch))
+
+            # ════════════════════════════════════════════════════════
+            # 5. DETECTION BREAKDOWN
+            # ════════════════════════════════════════════════════════
+            elements.append(_section('Detection Breakdown'))
+            elements.append(Spacer(1, 0.06 * inch))
+
+            sev_label_colors = {
+                'CRITICAL': T_CRITICAL, 'HIGH': T_HIGH,
+                'MEDIUM': T_MEDIUM, 'LOW': T_LOW,
+            }
+            sev_rows = [['Severity', 'Count', 'Share', 'Distribution']]
+            for sev in ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'):
+                cnt = severity.get(sev, 0)
+                pct = cnt / sev_total * 100
+                filled = max(1, int(pct / 5))
+                bar = '█' * filled + '░' * (20 - filled)
+                sev_rows.append([sev, str(cnt), f'{pct:.1f}%', bar])
+
+            sev_table = Table(sev_rows, colWidths=[1.1*inch, 0.85*inch, 0.75*inch, 3.8*inch])
+            sev_cmds = _std_header_cmds() + [
+                ('TEXTCOLOR', (0, 1), (-1, -1), GRAY_700),
+                ('ALIGN',     (1, 1), (2, -1),  'CENTER'),
+            ]
+            for i, sev in enumerate(('CRITICAL', 'HIGH', 'MEDIUM', 'LOW'), start=1):
+                tc = sev_label_colors[sev]
+                sev_cmds += [
+                    ('TEXTCOLOR', (0, i), (0, i), tc),
+                    ('FONTNAME',  (0, i), (0, i), 'Helvetica-Bold'),
+                    ('TEXTCOLOR', (3, i), (3, i), tc),
+                ]
+            sev_table.setStyle(TableStyle(sev_cmds))
+            elements.append(KeepTogether(sev_table))
             elements.append(Spacer(1, 0.15 * inch))
 
+            # Algorithm contribution
             if algorithm_dist:
-                algo_rows = [["Algorithm", "Findings", "Share"]]
+                elements.append(_section('Algorithm Contribution'))
+                elements.append(Spacer(1, 0.06 * inch))
                 algo_total = max(sum(a['count'] for a in algorithm_dist), 1)
+                algo_rows = [['Algorithm', 'Findings', 'Share']]
                 for a in algorithm_dist:
                     algo_rows.append([
                         a['algorithm'] or 'N/A',
                         str(a['count']),
-                        f"{(a['count'] / algo_total) * 100:.1f}%"
+                        f"{a['count'] / algo_total * 100:.1f}%",
                     ])
-                algo_table = Table(algo_rows, colWidths=[2.5 * inch, 1.2 * inch, 1.2 * inch])
-                algo_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#16213e')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#cad4df')),
-                    ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ]))
-                elements.append(Paragraph("Algorithm Contribution", h2_style))
-                elements.append(algo_table)
-                elements.append(Spacer(1, 0.1 * inch))
+                algo_table = Table(algo_rows, colWidths=[3.4*inch, 1.5*inch, 1.6*inch])
+                algo_table.setStyle(TableStyle(
+                    _std_header_cmds()
+                    + _alt_rows(len(algo_rows))
+                    + [('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                       ('TEXTCOLOR', (0, 1), (-1, -1), GRAY_700)]
+                ))
+                elements.append(KeepTogether(algo_table))
+                elements.append(Spacer(1, 0.15 * inch))
 
+            # Top anomalous sources
             if top_sources:
-                source_lines = ", ".join([f"{s['source']} ({s['count']})" for s in top_sources])
-                elements.append(Paragraph(f"<b>Top Sources:</b> {source_lines}", body_style))
-                elements.append(Spacer(1, 0.1 * inch))
+                elements.append(_section('Top Anomalous Sources'))
+                elements.append(Spacer(1, 0.06 * inch))
+                src_total = max(sum(s['count'] for s in top_sources), 1)
+                src_rows = [['Source', 'Count', 'Share']]
+                for s in top_sources:
+                    src_rows.append([
+                        s['source'] or 'unknown',
+                        str(s['count']),
+                        f"{s['count'] / src_total * 100:.1f}%",
+                    ])
+                src_table = Table(src_rows, colWidths=[3.4*inch, 1.5*inch, 1.6*inch])
+                src_table.setStyle(TableStyle(
+                    _std_header_cmds()
+                    + _alt_rows(len(src_rows))
+                    + [('ALIGN', (1, 1), (-1, -1), 'CENTER'),
+                       ('TEXTCOLOR', (0, 1), (-1, -1), GRAY_700)]
+                ))
+                elements.append(KeepTogether(src_table))
+                elements.append(Spacer(1, 0.15 * inch))
 
-            # Top anomalies table
+            # ════════════════════════════════════════════════════════
+            # 6. TOP DETECTED THREATS  (new page)
+            # ════════════════════════════════════════════════════════
             elements.append(PageBreak())
-            elements.append(Paragraph("Top Detected Threats (Detailed)", h2_style))
-
-            top_anomalies = self._get_top_anomalies(session_id, limit=15)
+            elements.append(_section('Top Detected Threats'))
+            elements.append(Spacer(1, 0.06 * inch))
 
             if top_anomalies:
-                header = ['Score', 'Severity', 'MITRE', 'Source', 'Event', 'Host/User', 'Timestamp']
-                rows = [header]
+                sev_row_bg  = {'CRITICAL': C_CRITICAL, 'HIGH': C_HIGH,
+                                'MEDIUM': C_MEDIUM, 'LOW': C_LOW}
+                sev_row_tc  = {'CRITICAL': T_CRITICAL, 'HIGH': T_HIGH,
+                                'MEDIUM': T_MEDIUM, 'LOW': T_LOW}
+                thr_header  = ['Score', 'Severity', 'Source', 'MITRE ID',
+                                'Tactic', 'Host', 'User', 'Timestamp']
+                thr_rows    = [thr_header]
                 for a in top_anomalies:
-                    mitre = a.get('mitre_technique_id') or 'N/A'
-                    tactic = a.get('mitre_tactic') or ''
-                    rows.append([
+                    thr_rows.append([
                         f"{a['anomaly_score']:.3f}",
                         a['severity'],
-                        f"{mitre} {f'({tactic})' if tactic else ''}"[:22],
-                        (a['source'] or '')[:14],
-                        (a.get('event_type') or a.get('event_id') or 'N/A')[:14],
-                        f"{(a.get('hostname') or 'N/A')[:8]}/{(a.get('username') or 'N/A')[:8]}",
-                        str(a['log_timestamp'])[:16]
+                        (a['source'] or 'N/A')[:18],
+                        (a.get('mitre_technique_id') or 'N/A')[:12],
+                        (a.get('mitre_tactic') or 'N/A').replace('_', ' ').title()[:20],
+                        (a.get('hostname') or 'N/A')[:14],
+                        (a.get('username') or 'N/A')[:12],
+                        str(a['log_timestamp'])[:16],
                     ])
 
-                col_widths = [0.55*inch, 0.75*inch, 1.4*inch, 1.0*inch, 0.95*inch, 1.05*inch, 1.0*inch]
-                t = Table(rows, colWidths=col_widths)
-
-                severity_colors = {
-                    'CRITICAL': colors.HexColor('#ffcccc'),
-                    'HIGH': colors.HexColor('#ffe0cc'),
-                    'MEDIUM': colors.HexColor('#fff3cc'),
-                    'LOW': colors.HexColor('#ccffcc'),
-                }
-
-                table_style = [
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, 0), 9),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 1), (-1, -1), 8),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-                    ('TOPPADDING', (0, 0), (-1, -1), 5),
+                col_w = [0.55*inch, 0.72*inch, 1.1*inch,
+                          0.85*inch, 1.25*inch, 0.9*inch, 0.8*inch, 1.05*inch]
+                thr_table = Table(thr_rows, colWidths=col_w, repeatRows=1)
+                thr_cmds = [
+                    ('BACKGROUND',   (0, 0), (-1, 0), NAVY),
+                    ('TEXTCOLOR',    (0, 0), (-1, 0), WHITE),
+                    ('FONTNAME',     (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE',     (0, 0), (-1, 0), 8),
+                    ('ALIGN',        (0, 0), (-1, 0), 'CENTER'),
+                    ('FONTNAME',     (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE',     (0, 1), (-1, -1), 7.5),
+                    ('ALIGN',        (0, 1), (1, -1),  'CENTER'),
+                    ('GRID',         (0, 0), (-1, -1), 0.3, GRAY_300),
+                    ('BOX',          (0, 0), (-1, -1), 1,   NAVY_MID),
+                    ('VALIGN',       (0, 0), (-1, -1), 'MIDDLE'),
+                    ('TOPPADDING',   (0, 0), (-1, -1), 5),
+                    ('BOTTOMPADDING',(0, 0), (-1, -1), 5),
                 ]
-
-                # Color rows by severity
-                for row_idx, a in enumerate(top_anomalies, 1):
+                for ri, a in enumerate(top_anomalies, 1):
                     sev = a.get('severity', '')
-                    bg = severity_colors.get(sev, colors.white)
-                    table_style.append(('BACKGROUND', (0, row_idx), (-1, row_idx), bg))
-
-                t.setStyle(TableStyle(table_style))
-                elements.append(t)
+                    thr_cmds += [
+                        ('BACKGROUND', (0, ri), (-1, ri), sev_row_bg.get(sev, WHITE)),
+                        ('TEXTCOLOR',  (1, ri), (1, ri),  sev_row_tc.get(sev, GRAY_700)),
+                        ('FONTNAME',   (1, ri), (1, ri),  'Helvetica-Bold'),
+                    ]
+                thr_table.setStyle(TableStyle(thr_cmds))
+                elements.append(thr_table)
                 elements.append(Spacer(1, 0.2 * inch))
 
-            top_techniques = self._get_top_mitre_techniques(session_id, limit=10)
+            # ════════════════════════════════════════════════════════
+            # 7. MITRE ATT&CK
+            # ════════════════════════════════════════════════════════
             if top_techniques:
-                elements.append(Paragraph("Top MITRE Techniques", h2_style))
-                mitre_rows = [["Technique", "Tactic", "Count"]]
+                elements.append(_section('MITRE ATT&CK Techniques'))
+                elements.append(Spacer(1, 0.06 * inch))
+                mitre_rows = [['Technique ID', 'Tactic', 'Count']]
                 for r in top_techniques:
                     mitre_rows.append([
-                        (r.get('mitre_technique_id') or 'N/A')[:20],
-                        (r.get('mitre_tactic') or 'N/A').replace('_', ' ').title()[:28],
-                        str(r.get('count', 0))
+                        r.get('mitre_technique_id') or 'N/A',
+                        (r.get('mitre_tactic') or 'N/A').replace('_', ' ').title(),
+                        str(r.get('count', 0)),
                     ])
-                mt = Table(mitre_rows, colWidths=[1.5 * inch, 3.1 * inch, 0.8 * inch])
-                mt.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a1a2e')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('GRID', (0, 0), (-1, -1), 0.35, colors.HexColor('#d0d7e2')),
-                    ('ALIGN', (2, 1), (2, -1), 'CENTER'),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ]))
-                elements.append(mt)
+                mt = Table(mitre_rows, colWidths=[1.5*inch, 3.6*inch, 1.4*inch])
+                mt.setStyle(TableStyle(
+                    _std_header_cmds()
+                    + _alt_rows(len(mitre_rows))
+                    + [('ALIGN', (2, 1), (2, -1), 'CENTER'),
+                       ('TEXTCOLOR', (0, 1), (-1, -1), GRAY_700)]
+                ))
+                elements.append(KeepTogether(mt))
+                elements.append(Spacer(1, 0.12 * inch))
 
-            # MITRE Summary
-            mitre_summary = self._get_mitre_summary(session_id)
             if mitre_summary and mitre_summary.get('unique_techniques', 0) > 0:
-                elements.append(Spacer(1, 0.3 * inch))
-                elements.append(Paragraph("MITRE ATT&CK Coverage", h2_style))
-                mitre_text = (
+                elements.append(Paragraph(
                     f"Detected techniques span <b>{mitre_summary['unique_tactics']}</b> tactic(s) "
                     f"and <b>{mitre_summary['unique_techniques']}</b> unique technique(s) "
-                    f"from the MITRE ATT&CK framework."
-                )
-                elements.append(Paragraph(mitre_text, body_style))
+                    f"from the MITRE ATT&amp;CK framework.",
+                    body_style,
+                ))
+                elements.append(Spacer(1, 0.15 * inch))
 
+            # ════════════════════════════════════════════════════════
+            # 8. RECOMMENDED ACTIONS
+            # ════════════════════════════════════════════════════════
             recommendations = self._build_recommendations(severity, top_sources, top_techniques)
             if recommendations:
-                elements.append(Spacer(1, 0.25 * inch))
-                elements.append(Paragraph("Recommended Actions", h2_style))
-                for idx, rec in enumerate(recommendations, start=1):
-                    elements.append(Paragraph(f"{idx}. {rec}", body_style))
-                    elements.append(Spacer(1, 0.04 * inch))
+                elements.append(_section('Recommended Actions'))
+                elements.append(Spacer(1, 0.06 * inch))
+                rec_rows = []
+                for idx, rec in enumerate(recommendations, 1):
+                    rec_rows.append([
+                        Paragraph(str(idx),
+                                   _ps(f'rn{idx}', fontSize=11, fontName='Helvetica-Bold',
+                                       textColor=ACCENT, alignment=TA_CENTER)),
+                        Paragraph(rec, body_style),
+                    ])
+                rec_table = Table(rec_rows, colWidths=[0.45*inch, 6.05*inch])
+                rec_cmds = [
+                    ('VALIGN',       (0, 0), (-1, -1), 'TOP'),
+                    ('TOPPADDING',   (0, 0), (-1, -1), 7),
+                    ('BOTTOMPADDING',(0, 0), (-1, -1), 7),
+                    ('LEFTPADDING',  (1, 0), (1, -1),  8),
+                    ('LINEBELOW',    (0, 0), (-1, -2),  0.3, GRAY_300),
+                ] + _alt_rows(len(rec_rows), start=0)
+                rec_table.setStyle(TableStyle(rec_cmds))
+                elements.append(KeepTogether(rec_table))
 
-            doc.build(elements)
-            logger.info(f"PDF report: {output_path}")
+            # ── Build ─────────────────────────────────────────────────
+            doc.build(
+                elements,
+                onFirstPage=lambda c, d: _draw_page(c, d, show_header=False),
+                onLaterPages=lambda c, d: _draw_page(c, d, show_header=True),
+            )
+            logger.info(f'PDF report: {output_path}')
             return output_path
 
         except Exception as e:
-            logger.error(f"PDF report failed: {e}")
-            raise ValidationError(f"Failed to generate PDF: {e}")
+            logger.error(f'PDF report failed: {e}')
+            raise ValidationError(f'Failed to generate PDF: {e}')
 
     # ─── Graph Generators ────────────────────────────────────────────
 

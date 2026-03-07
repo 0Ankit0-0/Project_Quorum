@@ -12,6 +12,7 @@ import Hub from "./pages/Hub";
 import Reports from "./pages/Reports";
 import Terminal from "./pages/Terminal";
 import Settings from "./pages/Settings";
+import Updates from "./pages/Updates";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -36,6 +37,7 @@ const App = () => (
           <Route path="/hub" element={<Hub />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/terminal" element={<Terminal />} />
+          <Route path="/updates" element={<Updates />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

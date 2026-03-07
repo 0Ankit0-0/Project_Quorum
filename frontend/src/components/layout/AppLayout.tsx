@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import Sidebar from "./Sidebar";
+import { getRootInfo } from "@/lib/api-functions";
 
 const SIDEBAR_KEY = "quorum-sidebar-collapsed";
 
@@ -10,13 +11,11 @@ interface AppLayoutProps {
 }
 
 export default function AppLayout({ children, title, subtitle }: AppLayoutProps) {
-  // Persist collapsed state across page navigations via localStorage
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     return localStorage.getItem(SIDEBAR_KEY) === "true";
   });
-
-  // Live clock — updates every second
   const [time, setTime] = useState(() => new Date());
+  const [isBackendOnline, setIsBackendOnline] = useState(false);
 
   const handleToggle = useCallback(() => {
     setCollapsed((c) => {
@@ -26,13 +25,36 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
     });
   }, []);
 
-  // Tick the clock
   useEffect(() => {
     const id = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // Keyboard shortcut: Ctrl+B (or Cmd+B on Mac) toggles the sidebar
+  useEffect(() => {
+    let mounted = true;
+
+    const checkBackend = async () => {
+      try {
+        const root = await getRootInfo();
+        if (!mounted) return;
+        setIsBackendOnline(String(root.status ?? "").toLowerCase() === "online");
+      } catch {
+        if (!mounted) return;
+        setIsBackendOnline(false);
+      }
+    };
+
+    void checkBackend();
+    const id = setInterval(() => {
+      void checkBackend();
+    }, 15000);
+
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "b") {
@@ -46,14 +68,12 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
 
   return (
     <div className="flex h-screen overflow-hidden">
-      <Sidebar collapsed={collapsed} onToggle={handleToggle} />
+      <Sidebar collapsed={collapsed} onToggle={handleToggle} systemOnline={isBackendOnline} />
 
-      {/* Main content — margin tracks sidebar width */}
       <div
         className="flex-1 flex flex-col overflow-hidden transition-all duration-[250ms] ease-[cubic-bezier(0.4,0,0.2,1)]"
         style={{ marginLeft: collapsed ? 64 : 240 }}
       >
-        {/* Header */}
         <header
           className="h-14 border-b border-border flex items-center justify-between px-6 shrink-0"
           style={{ background: "hsl(var(--card))" }}
@@ -66,12 +86,16 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono"
               style={{
-                background: "hsl(var(--low) / 0.1)",
-                border: "1px solid hsl(var(--low) / 0.3)",
-                color: "hsl(var(--low))",
+                background: isBackendOnline
+                  ? "hsl(var(--low) / 0.1)"
+                  : "hsl(var(--critical) / 0.1)",
+                border: isBackendOnline
+                  ? "1px solid hsl(var(--low) / 0.3)"
+                  : "1px solid hsl(var(--critical) / 0.3)",
+                color: isBackendOnline ? "hsl(var(--low))" : "hsl(var(--critical))",
               }}
             >
-              <span>● OFFLINE MODE</span>
+              <span>{isBackendOnline ? "● ONLINE MODE" : "● OFFLINE MODE"}</span>
             </div>
             <div className="text-xs font-mono text-muted-foreground border-l border-border pl-3 tabular-nums">
               <div>{time.toLocaleTimeString("en-US", { hour12: false })}</div>

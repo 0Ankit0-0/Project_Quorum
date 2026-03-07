@@ -8,6 +8,7 @@ import {
   Network,
   BarChart3,
   Terminal,
+  CloudUpload,
   Settings,
   ChevronRight,
   PanelLeftClose,
@@ -26,15 +27,15 @@ const mainNavItems = [
   { icon: Network, label: "Hub", path: "/hub" },
   { icon: BarChart3, label: "Reports", path: "/reports" },
   { icon: Terminal, label: "Terminal", path: "/terminal" },
+  { icon: CloudUpload, label: "Updates", path: "/updates" },
 ];
 
-const bottomNavItems = [
-  { icon: Settings, label: "Settings", path: "/settings" },
-];
+const bottomNavItems = [{ icon: Settings, label: "Settings", path: "/settings" }];
 
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
+  systemOnline: boolean;
 }
 
 function NavItem({
@@ -78,9 +79,7 @@ function NavItem({
             </motion.span>
           )}
         </AnimatePresence>
-        {!collapsed && isActive && (
-          <ChevronRight className="w-3 h-3 opacity-60 shrink-0" />
-        )}
+        {!collapsed && isActive && <ChevronRight className="w-3 h-3 opacity-60 shrink-0" />}
       </motion.div>
     </Link>
   );
@@ -99,12 +98,11 @@ function NavItem({
   return <div>{content}</div>;
 }
 
-export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, systemOnline }: SidebarProps) {
   const location = useLocation();
 
   const isActive = (path: string) =>
-    location.pathname === path ||
-    (path !== "/" && location.pathname.startsWith(path));
+    location.pathname === path || (path !== "/" && location.pathname.startsWith(path));
 
   return (
     <motion.aside
@@ -113,7 +111,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       animate={{ width: collapsed ? 64 : 240 }}
       transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
     >
-      {/* Logo + collapse toggle */}
       <div
         className="flex items-center border-b border-border shrink-0 overflow-hidden"
         style={{
@@ -123,7 +120,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           gap: "8px",
         }}
       >
-        {/* Logo — hidden when collapsed */}
         <AnimatePresence initial={false}>
           {!collapsed && (
             <motion.div
@@ -144,17 +140,22 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 >
                   <Shield className="w-4 h-4 text-cyan" />
                 </div>
-                <div className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-cyber-low animate-pulse" />
+                <div
+                  className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full animate-pulse ${
+                    systemOnline ? "bg-cyber-low" : "bg-cyber-critical"
+                  }`}
+                />
               </div>
               <div className="min-w-0">
                 <p className="font-bold text-base tracking-wide text-foreground">QUORUM</p>
-                <p className="text-xs text-muted-foreground font-mono">v2.4.1 · OFFLINE</p>
+                <p className="text-xs text-muted-foreground font-mono">
+                  v2.4.1 - {systemOnline ? "ONLINE" : "OFFLINE"}
+                </p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Toggle button — always visible, centered when collapsed */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -185,7 +186,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </Tooltip>
       </div>
 
-      {/* Main Nav */}
       <nav
         className="flex-1 py-4 space-y-0.5 overflow-y-auto overflow-x-hidden"
         style={{
@@ -209,16 +209,10 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         </AnimatePresence>
 
         {mainNavItems.map((item) => (
-          <NavItem
-            key={item.path}
-            item={item}
-            collapsed={collapsed}
-            isActive={isActive(item.path)}
-          />
+          <NavItem key={item.path} item={item} collapsed={collapsed} isActive={isActive(item.path)} />
         ))}
       </nav>
 
-      {/* Separator + Bottom nav (Settings) */}
       <div
         className="shrink-0 border-t border-border"
         style={{
@@ -231,16 +225,10 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </p>
         )}
         {bottomNavItems.map((item) => (
-          <NavItem
-            key={item.path}
-            item={item}
-            collapsed={collapsed}
-            isActive={isActive(item.path)}
-          />
+          <NavItem key={item.path} item={item} collapsed={collapsed} isActive={isActive(item.path)} />
         ))}
       </div>
 
-      {/* System status footer */}
       <AnimatePresence initial={false}>
         {!collapsed && (
           <motion.div
@@ -260,16 +248,28 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 }}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Environment</span>
-                  <span className="text-xs font-semibold text-cyber-low font-mono">AIR-GAPPED</span>
+                  <span className="text-xs text-muted-foreground">Backend</span>
+                  <span
+                    className={`text-xs font-semibold font-mono ${
+                      systemOnline ? "text-cyber-low" : "text-cyber-critical"
+                    }`}
+                  >
+                    {systemOnline ? "ONLINE" : "OFFLINE"}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">Nodes Online</span>
-                  <span className="text-xs font-semibold text-cyan font-mono">7/8</span>
+                  <span className="text-xs text-muted-foreground">Environment</span>
+                  <span className="text-xs font-semibold text-cyan font-mono">AIR-GAPPED</span>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
-                  <div className="pulse-dot bg-cyber-low" />
-                  <span className="text-xs text-cyber-low">System Operational</span>
+                  <div
+                    className={`pulse-dot ${systemOnline ? "bg-cyber-low" : "bg-cyber-critical"}`}
+                  />
+                  <span
+                    className={`text-xs ${systemOnline ? "text-cyber-low" : "text-cyber-critical"}`}
+                  >
+                    {systemOnline ? "System Operational" : "Backend Unreachable"}
+                  </span>
                 </div>
               </div>
             </div>

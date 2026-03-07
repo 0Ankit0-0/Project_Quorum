@@ -983,3 +983,74 @@ export const getMitreTechniques = async (): Promise<MitreSummaryData> => {
       techniques.reduce((sum, t) => sum + t.detections, 0),
   };
 };
+
+export interface SoupUpdateHistoryEntry {
+  timestamp: string;
+  version?: string;
+  type: "model" | "rules" | "mitre" | string;
+  hash?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SoupVerifyResult {
+  valid: boolean;
+  message: string;
+  package_path: string;
+  metadata?: Record<string, unknown>;
+  version?: string;
+  type?: string;
+}
+
+export interface SoupApplyResult {
+  success: boolean;
+  type: string;
+  version: string;
+  message: string;
+}
+
+export interface SoupRollbackResult {
+  success: boolean;
+  message: string;
+}
+
+export interface SoupScanResult {
+  packages_found: number;
+  packages: string[];
+}
+
+export const verifyUpdatePackage = async (
+  packagePath: string,
+): Promise<SoupVerifyResult> => {
+  const response = await apiClient.post<SoupVerifyResult>("/updates/verify", null, {
+    params: { package_path: packagePath },
+  });
+  return response.data;
+};
+
+export const applyUpdatePackage = async (
+  packagePath: string,
+): Promise<SoupApplyResult> => {
+  const response = await apiClient.post<SoupApplyResult>("/updates/apply", null, {
+    params: { package_path: packagePath },
+  });
+  return response.data;
+};
+
+export const rollbackUpdatePackage = async (
+  updateType: "model" | "rules" | "mitre",
+): Promise<SoupRollbackResult> => {
+  const response = await apiClient.post<SoupRollbackResult>("/updates/rollback", null, {
+    params: { update_type: updateType },
+  });
+  return response.data;
+};
+
+export const getUpdateHistory = async (): Promise<SoupUpdateHistoryEntry[]> => {
+  const response = await apiClient.get<{ history: SoupUpdateHistoryEntry[] }>("/updates/history");
+  return response.data.history ?? [];
+};
+
+export const scanForUpdatePackages = async (): Promise<SoupScanResult> => {
+  const response = await apiClient.get<SoupScanResult>("/updates/scan");
+  return response.data;
+};
