@@ -28,6 +28,29 @@ DISALLOWED_UPLOAD_SUFFIXES = {
 }
 
 
+def _resolve_upload_destination(upload_file: UploadFile) -> Path:
+    if not upload_file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Missing uploaded filename",
+        )
+    upload_dir = settings.DATA_DIR / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(upload_file.filename).name
+    suffix = Path(safe_name).suffix.lower()
+    if suffix in DISALLOWED_UPLOAD_SUFFIXES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unsupported file type for log ingestion: {suffix}",
+        )
+    return upload_dir / safe_name
+
+
+def _persist_uploaded_file(upload_file: UploadFile, destination: Path) -> None:
+    with destination.open("wb") as buffer:
+        shutil.copyfileobj(upload_file.file, buffer)
+
+
 @router.post("/ingest")
 async def ingest_log_file(
     background_tasks: BackgroundTasks,
@@ -44,26 +67,11 @@ async def ingest_log_file(
     try:
         # Primary path used by frontend: multipart file upload
         if file is not None:
-            if not file.filename:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Missing uploaded filename"
-                )
-
-            upload_dir = settings.DATA_DIR / "uploads"
-            upload_dir.mkdir(parents=True, exist_ok=True)
-            safe_name = Path(file.filename).name
-            suffix = Path(safe_name).suffix.lower()
-            if suffix in DISALLOWED_UPLOAD_SUFFIXES:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Unsupported file type for log ingestion: {suffix}",
-                )
-            saved_path = upload_dir / safe_name
+            saved_path = _resolve_upload_destination(file)
+            safe_name = saved_path.name
 
             try:
-                with saved_path.open("wb") as buffer:
-                    shutil.copyfileobj(file.file, buffer)
+                _persist_uploaded_file(file, saved_path)
 
                 stats = log_service.ingest_file(saved_path, source_type)
                 dataset_info = dataset_service.ingest_uploaded_file(saved_path, source_type)
@@ -262,16 +270,11 @@ async def list_uploaded_files():
         files.sort(key=lambda x: x["uploaded_at"], reverse=True)
         
         dataset_index = {
-            item["filename"]: item
-            for item in dataset_service.list_datasets()
+            item["filename"]: item for item in dataset_service.list_datasets()
         }
         enriched = []
         for item in files:
             dataset = dataset_index.get(item["filename"])
-            if dataset is None:
-                ensured = dataset_service.ensure_dataset_for_filename(item["filename"])
-                if ensured:
-                    dataset = dataset_service.get_dataset_by_filename(item["filename"])
             enriched.append(
                 {
                     **item,

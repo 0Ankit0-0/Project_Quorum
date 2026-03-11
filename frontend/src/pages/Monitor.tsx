@@ -9,7 +9,6 @@ import {
   startSystemMonitoring,
   stopRealtimeMonitor,
   stopSystemMonitoring,
-  type MonitoringDeviceEvent,
   type MonitoringSample,
 } from "@/lib/api-functions";
 import { toast } from "sonner";
@@ -28,7 +27,6 @@ interface LiveLogEntry {
 export default function Monitor() {
   const [running, setRunning] = useState(false);
   const [samples, setSamples] = useState<MonitoringSample[]>([]);
-  const [events, setEvents] = useState<MonitoringDeviceEvent[]>([]);
   const [liveLogs, setLiveLogs] = useState<LiveLogEntry[]>([]);
   const [connecting, setConnecting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -45,7 +43,6 @@ export default function Monitor() {
     const snap = await getSystemMonitoringSnapshot(120);
     setRunning(Boolean(snap.status?.running));
     setSamples(snap.samples ?? []);
-    setEvents(snap.device_events ?? []);
   }, []);
 
   const startPollingFallback = useCallback(() => {
@@ -68,11 +65,9 @@ export default function Monitor() {
           const payload = JSON.parse(event.data) as {
             status?: { running?: boolean };
             samples?: MonitoringSample[];
-            device_events?: MonitoringDeviceEvent[];
           };
           setRunning(Boolean(payload.status?.running));
           setSamples(payload.samples ?? []);
-          setEvents(payload.device_events ?? []);
         } catch {
           // ignore malformed ws frame
         }
@@ -285,52 +280,33 @@ export default function Monitor() {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="cyber-card overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-semibold">Live Samples</h3>
-            </div>
-            <div className="max-h-[340px] overflow-y-auto">
-              <table className="w-full text-xs font-mono">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="px-3 py-2 text-left">Time</th>
-                    <th className="px-3 py-2 text-left">CPU</th>
-                    <th className="px-3 py-2 text-left">Mem</th>
-                    <th className="px-3 py-2 text-left">Disk</th>
-                    <th className="px-3 py-2 text-left">Net</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readOnlySamples.map((s) => (
-                    <tr key={s.timestamp} className="border-b border-border/40">
-                      <td className="px-3 py-2">{new Date(s.timestamp).toLocaleTimeString()}</td>
-                      <td className="px-3 py-2">{s.cpu_percent.toFixed(1)}%</td>
-                      <td className="px-3 py-2">{s.memory_percent.toFixed(1)}%</td>
-                      <td className="px-3 py-2">{fmtRate(s.disk_read_bps + s.disk_write_bps)}</td>
-                      <td className="px-3 py-2">{fmtRate(s.network_recv_bps + s.network_send_bps)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <div className="cyber-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <h3 className="text-sm font-semibold">Live Metrics</h3>
           </div>
-
-          <div className="cyber-card overflow-hidden">
-            <div className="px-4 py-3 border-b border-border">
-              <h3 className="text-sm font-semibold">Device Events</h3>
-            </div>
-            <div className="max-h-[340px] overflow-y-auto p-3 space-y-2">
-              {events.slice(-40).reverse().map((ev, idx) => (
-                <div key={`${ev.timestamp}-${idx}`} className="p-2 rounded border border-border/50 bg-muted/30">
-                  <p className="text-xs font-mono text-foreground">
-                    {ev.event.toUpperCase()} | {ev.device_class}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{ev.device_name}</p>
-                  <p className="text-[11px] text-muted-foreground">{new Date(ev.timestamp).toLocaleString()}</p>
-                </div>
-              ))}
-            </div>
+          <div className="max-h-[340px] overflow-y-auto">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="px-3 py-2 text-left">Time</th>
+                  <th className="px-3 py-2 text-left">CPU</th>
+                  <th className="px-3 py-2 text-left">Mem</th>
+                  <th className="px-3 py-2 text-left">Disk</th>
+                  <th className="px-3 py-2 text-left">Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {readOnlySamples.map((s) => (
+                  <tr key={s.timestamp} className="border-b border-border/40">
+                    <td className="px-3 py-2">{new Date(s.timestamp).toLocaleTimeString()}</td>
+                    <td className="px-3 py-2">{s.cpu_percent.toFixed(1)}%</td>
+                    <td className="px-3 py-2">{s.memory_percent.toFixed(1)}%</td>
+                    <td className="px-3 py-2">{fmtRate(s.disk_read_bps + s.disk_write_bps)}</td>
+                    <td className="px-3 py-2">{fmtRate(s.network_recv_bps + s.network_send_bps)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 

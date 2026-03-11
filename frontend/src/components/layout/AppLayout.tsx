@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Sidebar from "./Sidebar";
-import { getRootInfo } from "@/lib/api-functions";
+import { apiClient } from "@/lib/api";
 
 const SIDEBAR_KEY = "quorum-sidebar-collapsed";
 
@@ -16,6 +16,7 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
   });
   const [time, setTime] = useState(() => new Date());
   const [isBackendOnline, setIsBackendOnline] = useState(false);
+  const failedChecksRef = useRef(0);
 
   const handleToggle = useCallback(() => {
     setCollapsed((c) => {
@@ -35,12 +36,17 @@ export default function AppLayout({ children, title, subtitle }: AppLayoutProps)
 
     const checkBackend = async () => {
       try {
-        const root = await getRootInfo();
+        const root = await apiClient.get("/", { timeout: 2000 });
         if (!mounted) return;
-        setIsBackendOnline(String(root.status ?? "").toLowerCase() === "online");
+        const online = String(root.data?.status ?? "").toLowerCase() === "online";
+        setIsBackendOnline(online);
+        failedChecksRef.current = 0;
       } catch {
         if (!mounted) return;
-        setIsBackendOnline(false);
+        failedChecksRef.current += 1;
+        if (failedChecksRef.current >= 3) {
+          setIsBackendOnline(false);
+        }
       }
     };
 

@@ -4,6 +4,7 @@ import { Database, Download, HardDrive, KeyRound, RefreshCw, Shield } from "luci
 import AppLayout from "@/components/layout/AppLayout";
 import {
   downloadExportedSystemLog,
+  exportAllReportsBundle,
   exportSystemLog,
   getEncryptionConfig,
   getStorageStatus,
@@ -133,11 +134,37 @@ export default function Settings() {
     }
   };
 
+  const exportAllReports = async () => {
+    if (!passphrase.trim()) {
+      toast.error("Passphrase required");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await exportAllReportsBundle(passphrase.trim(), encryptExport);
+      const blob = await downloadExportedSystemLog(result.filename);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = result.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Reports bundle downloaded (${result.sha256.slice(0, 12)}...)`);
+    } catch (error) {
+      console.error(error);
+      toast.error("Reports bundle export failed (check passphrase)");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const usedGb = toGb(storage.used_bytes);
   const quotaGb = toGb(storage.quota_bytes);
 
   return (
-    <AppLayout title="Settings" subtitle="Storage, encryption, and secure system log export">
+    <AppLayout title="Settings" subtitle="Storage, encryption, and secure export controls">
       <div className="flex flex-col gap-6 h-full">
 
         {/* ── Row 1: Storage + Encryption ─────────────────────────────── */}
@@ -406,6 +433,18 @@ export default function Settings() {
             >
               <Download className="w-4 h-4" />
               Export quorum.log
+            </button>
+          </div>
+
+          <div className="mt-3">
+            <button
+              onClick={() => void exportAllReports()}
+              disabled={busy}
+              className="h-[42px] px-5 rounded-md text-xs font-semibold flex items-center justify-center gap-2 border border-cyan/50 text-cyan hover:bg-cyan/10 transition-colors disabled:opacity-50"
+              style={{ boxShadow: "0 0 12px hsl(var(--cyan) / 0.15)" }}
+            >
+              <Download className="w-4 h-4" />
+              Export All Reports + Uploaded Files
             </button>
           </div>
 

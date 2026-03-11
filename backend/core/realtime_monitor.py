@@ -184,6 +184,10 @@ class RealtimeMonitor:
         """Start the monitoring loop"""
         if self._running:
             return
+        # Reactivate previously registered tailers after stop/start cycles.
+        for tailer in self._tailers.values():
+            if not tailer._running:
+                tailer.start()
         self._running = True
         self._session_id = session_id
         self._stats['started_at'] = datetime.utcnow().isoformat()

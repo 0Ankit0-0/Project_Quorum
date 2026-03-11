@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
-import io
 import json
 from pathlib import Path
 from typing import Any, Dict
@@ -172,6 +171,60 @@ class SettingsService:
             "size_bytes": exported.stat().st_size,
         }
 
+    def export_all_reports_bundle(
+        self,
+        passphrase: str,
+        encrypt: bool = False,
+    ) -> Dict[str, Any]:
+        if not self.verify_passphrase(passphrase):
+            raise PermissionError("Invalid passphrase")
+
+        output_dir = settings.DATA_DIR / "exports"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+        package_path = output_dir / f"quorum_reports_bundle_{timestamp}.zip"
+        manifest: Dict[str, Any] = {
+            "created_at": datetime.utcnow().isoformat(),
+            "bundle_type": "reports_with_uploads",
+            "includes": [],
+        }
+
+        with zipfile.ZipFile(package_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            reports_added = self._write_tree_to_zip(
+                zf=zf,
+                root=settings.REPORTS_DIR,
+                prefix="reports",
+            )
+            uploads_added = self._write_tree_to_zip(
+                zf=zf,
+                root=settings.DATA_DIR / "uploads",
+                prefix="uploads",
+            )
+
+            manifest["includes"].append(
+                {"name": "reports", "files": reports_added}
+            )
+            manifest["includes"].append(
+                {"name": "uploads", "files": uploads_added}
+            )
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+        exported = package_path
+        if encrypt:
+            encrypted_path = output_dir / f"{package_path.stem}.enc"
+            encrypted_path.write_bytes(self._encrypt_blob(package_path.read_bytes(), passphrase))
+            package_path.unlink(missing_ok=True)
+            exported = encrypted_path
+
+        return {
+            "filename": exported.name,
+            "path": str(exported),
+            "sha256": hashlib.sha256(exported.read_bytes()).hexdigest(),
+            "encrypted": encrypt,
+            "size_bytes": exported.stat().st_size,
+        }
+
     def _encrypt_blob(self, data: bytes, passphrase: str) -> bytes:
         salt = hashlib.sha256(passphrase.encode("utf-8")).digest()[:16]
         kdf = PBKDF2HMAC(
@@ -202,6 +255,18 @@ class SettingsService:
                     continue
         return total
 
+    def _write_tree_to_zip(self, zf: zipfile.ZipFile, root: Path, prefix: str) -> int:
+        if not root.exists():
+            return 0
+        count = 0
+        for file_path in root.rglob("*"):
+            if not file_path.is_file():
+                continue
+            arcname = Path(prefix) / file_path.relative_to(root)
+            zf.write(file_path, arcname=str(arcname))
+            count += 1
+        return count
+
 
 def base64_urlsafe(raw: bytes) -> bytes:
     import base64
@@ -210,4 +275,3 @@ def base64_urlsafe(raw: bytes) -> bytes:
 
 
 settings_service = SettingsService()
-

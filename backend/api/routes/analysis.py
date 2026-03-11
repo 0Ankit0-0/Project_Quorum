@@ -53,10 +53,16 @@ async def list_sessions(limit: int = 20):
         from core.database import db
         
         query = """
-            SELECT session_id, start_time, end_time, status,
-                   logs_analyzed, anomalies_detected, parameters
-            FROM analysis_sessions
-            ORDER BY start_time DESC
+            SELECT
+                s.session_id,
+                s.start_time,
+                s.end_time,
+                s.status,
+                s.logs_analyzed,
+                s.anomalies_detected,
+                s.parameters
+            FROM analysis_sessions s
+            ORDER BY s.start_time DESC
             LIMIT ?
         """
 
@@ -87,6 +93,37 @@ async def list_sessions(limit: int = 20):
                 except Exception:
                     duration_seconds = 0.0
 
+            source_filename = "unknown"
+            source_param = str(parsed_params.get("log_source") or "").strip()
+
+            if source_param and source_param.lower() not in {"all", "latest"}:
+                source_filename = source_param
+            elif source_param.lower() == "all":
+                source_filename = "all"
+            else:
+                # Prefer source observed in anomalies generated during this session.
+                dominant_source = db.fetch_one(
+                    """
+                    SELECT l.source, COUNT(*) AS cnt
+                    FROM anomalies a
+                    JOIN logs l ON l.id = a.log_id
+                    WHERE a.detected_at >= ?
+                      AND (? IS NULL OR a.detected_at <= ?)
+                    GROUP BY l.source
+                    ORDER BY cnt DESC
+                    LIMIT 1
+                    """,
+                    (start_time, end_time, end_time),
+                )
+                if dominant_source and dominant_source.get("source"):
+                    source_filename = str(dominant_source.get("source"))
+                elif source_param.lower() == "latest":
+                    latest_source = db.fetch_one(
+                        "SELECT source FROM logs ORDER BY ingestion_time DESC LIMIT 1"
+                    )
+                    if latest_source and latest_source.get("source"):
+                        source_filename = str(latest_source.get("source"))
+
             sessions.append(
                 {
                     "id": row.get("session_id"),
@@ -97,6 +134,7 @@ async def list_sessions(limit: int = 20):
                     "duration_seconds": duration_seconds,
                     "created_at": start_time,
                     "status": str(row.get("status") or "completed").upper(),
+                    "source_filename": source_filename,
                 }
             )
 

@@ -5,6 +5,7 @@ Frontend/CLI can subscribe and receive live anomaly alerts as they happen.
 """
 import asyncio
 import json
+from pathlib import Path
 from typing import Optional, AsyncGenerator
 
 from fastapi import APIRouter, Query
@@ -101,22 +102,47 @@ async def start_stream(files: Optional[list] = None):
     """Start the real-time monitor with specified files"""
     from core.realtime_monitor import realtime_monitor
     from config.settings import settings
+    import platform
 
     added = []
     candidate_files = files or []
 
     if not candidate_files:
-        upload_dir = settings.DATA_DIR / "uploads"
-        if upload_dir.exists():
-            candidate_files = [
-                str(p)
-                for p in sorted(
-                    upload_dir.glob("*"),
-                    key=lambda item: item.stat().st_mtime,
-                    reverse=True,
-                )
-                if p.is_file() and p.suffix.lower() in {".log", ".txt", ".syslog"}
-            ][:5]
+        # Default to live runtime/system logs, not uploaded datasets.
+        defaults = []
+        quorum_log = settings.LOGS_DIR / settings.LOG_FILE
+        if quorum_log.exists():
+            defaults.append(str(quorum_log))
+
+        system_name = platform.system().lower()
+        if system_name == "linux":
+            for p in ["/var/log/syslog", "/var/log/auth.log", "/var/log/messages"]:
+                if Path(p).exists():
+                    defaults.append(p)
+        elif system_name == "darwin":
+            for p in ["/var/log/system.log", "/var/log/install.log"]:
+                if Path(p).exists():
+                    defaults.append(p)
+        elif system_name == "windows":
+            # Windows text log commonly available in local app logs.
+            for p in [
+                str(settings.LOGS_DIR / settings.LOG_FILE),
+                str(settings.LOGS_DIR / "application.log"),
+                str(settings.LOGS_DIR / "system.log"),
+            ]:
+                if Path(p).exists():
+                    defaults.append(p)
+
+        # de-dup, keep order, cap list
+        seen = set()
+        candidate_files = []
+        for item in defaults:
+            if item in seen:
+                continue
+            seen.add(item)
+            candidate_files.append(item)
+            if len(candidate_files) >= 5:
+                break
 
     for f in candidate_files:
         if realtime_monitor.add_file(f):

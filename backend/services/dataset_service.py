@@ -8,9 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime
 import hashlib
 import json
+import io
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import csv
+import zipfile
 
 import duckdb
 
@@ -358,7 +360,8 @@ class DatasetService:
             conn.close()
 
     def generate_report_bundle(self, filename: str) -> Dict[str, Any]:
-        dataset = self.get_dataset_by_filename(filename)
+        """Generate a full dataset report bundle and persist bundle metadata."""
+        dataset = self.ensure_dataset_for_filename(filename) or self.get_dataset_by_filename(filename)
         if not dataset:
             raise FileNotFoundError("Dataset not found")
         db_path = Path(dataset["db_path"])
@@ -366,9 +369,40 @@ class DatasetService:
             raise FileNotFoundError("Dataset DB not found")
 
         report_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        report_dir = self._create_report_workspace(report_id)
+        metrics = self._collect_dataset_metrics(db_path)
+
+        summary = self._build_summary(dataset, report_id, metrics)
+        summary_path = self._write_summary_file(report_dir, summary)
+        anomalies_path = self._write_anomalies_file(report_dir, metrics["high_risk_rows"])
+        ai_path = self._write_ai_analysis_file(
+            report_dir=report_dir,
+            total_logs=metrics["total_logs"],
+            high_risk_count=len(metrics["high_risk_rows"]),
+        )
+
+        file_names = ["summary.json", "anomalies.csv", "ai_analysis.json", "integrity.sha256"]
+        bundle_hash = self._compute_bundle_hash([summary_path, anomalies_path, ai_path], report_dir)
+        self.add_report_metadata(
+            filename=filename,
+            report_id=report_id,
+            report_dir=report_dir,
+            hash_sha256=bundle_hash,
+            files=file_names,
+        )
+        return {
+            "report_id": report_id,
+            "report_dir": str(report_dir),
+            "hash_sha256": bundle_hash,
+            "files": file_names,
+        }
+
+    def _create_report_workspace(self, report_id: str) -> Path:
         report_dir = settings.REPORTS_DIR / f"report_{report_id}"
         report_dir.mkdir(parents=True, exist_ok=True)
+        return report_dir
 
+    def _collect_dataset_metrics(self, db_path: Path) -> Dict[str, Any]:
         conn = duckdb.connect(str(db_path), read_only=True)
         try:
             total_logs_row = conn.execute("SELECT COUNT(*) FROM logs").fetchone()
@@ -381,7 +415,6 @@ class DatasetService:
                 """
             ).fetchall()
             severity_distribution = {row[0]: int(row[1]) for row in sev_rows}
-
             high_risk_rows = conn.execute(
                 """
                 SELECT timestamp, source, severity, message
@@ -393,56 +426,215 @@ class DatasetService:
                 LIMIT 500
                 """
             ).fetchall()
+            return {
+                "total_logs": total_logs,
+                "severity_distribution": severity_distribution,
+                "high_risk_rows": high_risk_rows,
+            }
         finally:
             conn.close()
 
-        summary = {
+    def _build_summary(self, dataset: Dict[str, Any], report_id: str, metrics: Dict[str, Any]) -> Dict[str, Any]:
+        return {
             "report_id": report_id,
             "dataset_id": dataset["dataset_id"],
             "filename": dataset["filename"],
             "generated_at": datetime.utcnow().isoformat(),
-            "total_logs": total_logs,
-            "high_risk_records": len(high_risk_rows),
-            "severity_distribution": severity_distribution,
+            "total_logs": metrics["total_logs"],
+            "high_risk_records": len(metrics["high_risk_rows"]),
+            "severity_distribution": metrics["severity_distribution"],
         }
 
-        summary_path = report_dir / "summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    def _write_summary_file(self, report_dir: Path, summary: Dict[str, Any]) -> Path:
+        path = report_dir / "summary.json"
+        path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        return path
 
-        anomalies_path = report_dir / "anomalies.csv"
-        with anomalies_path.open("w", newline="", encoding="utf-8") as handle:
+    def _write_anomalies_file(self, report_dir: Path, high_risk_rows: List[Any]) -> Path:
+        path = report_dir / "anomalies.csv"
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["timestamp", "source", "severity", "message"])
             for row in high_risk_rows:
                 writer.writerow(list(row))
+        return path
 
+    def _write_ai_analysis_file(self, report_dir: Path, total_logs: int, high_risk_count: int) -> Path:
         ai_analysis = {
-            "threat_score": round(min(1.0, (len(high_risk_rows) / max(total_logs, 1)) * 3.0), 4),
-            "risk_level": "HIGH" if len(high_risk_rows) > 0 else "LOW",
-            "confidence": round(min(0.99, 0.65 + (len(high_risk_rows) / max(total_logs, 1))), 4),
+            "threat_score": round(min(1.0, (high_risk_count / max(total_logs, 1)) * 3.0), 4),
+            "risk_level": "HIGH" if high_risk_count > 0 else "LOW",
+            "confidence": round(min(0.99, 0.65 + (high_risk_count / max(total_logs, 1))), 4),
             "reason": "High-risk severity/messages detected in dataset logs",
             "model": "hybrid_rules_v1",
         }
-        ai_path = report_dir / "ai_analysis.json"
-        ai_path.write_text(json.dumps(ai_analysis, indent=2), encoding="utf-8")
+        path = report_dir / "ai_analysis.json"
+        path.write_text(json.dumps(ai_analysis, indent=2), encoding="utf-8")
+        return path
 
-        file_hash = self._hash_file(summary_path) + self._hash_file(anomalies_path) + self._hash_file(ai_path)
-        bundle_hash = hashlib.sha256(file_hash.encode("utf-8")).hexdigest()
+    def _compute_bundle_hash(self, files: List[Path], report_dir: Path) -> str:
+        joined = "".join(self._hash_file(path) for path in files)
+        bundle_hash = hashlib.sha256(joined.encode("utf-8")).hexdigest()
         (report_dir / "integrity.sha256").write_text(bundle_hash, encoding="utf-8")
+        return bundle_hash
 
-        self.add_report_metadata(
-            filename=filename,
-            report_id=report_id,
-            report_dir=report_dir,
-            hash_sha256=bundle_hash,
-            files=["summary.json", "anomalies.csv", "ai_analysis.json", "integrity.sha256"],
-        )
-        return {
-            "report_id": report_id,
-            "report_dir": str(report_dir),
-            "hash_sha256": bundle_hash,
-            "files": ["summary.json", "anomalies.csv", "ai_analysis.json", "integrity.sha256"],
-        }
+    def build_report_archive(
+        self,
+        filename: str,
+        report_id: str,
+        report_dir: Path,
+    ) -> tuple[bytes, str, str]:
+        """Build zip payload with dataset outputs, related artifacts, and a file guide."""
+        dataset_name = Path(filename).stem
+        safe_dataset = "".join(ch if ch.isalnum() else "_" for ch in dataset_name).strip("_") or "dataset"
+        prefix = f"{safe_dataset}_{report_id}"
 
+        file_manifest = []
+        readme_lines = [
+            "QUORUM REPORT BUNDLE",
+            "",
+            "This archive includes dataset-level outputs and any related session artifacts found.",
+            "",
+            "File guide:",
+            "- *_summary.json: High-level dataset summary and counts.",
+            "- *_anomalies.csv: Extracted high-risk/anomalous rows.",
+            "- *_ai_analysis.json: Model-derived risk summary.",
+            "- *_integrity.sha256: Bundle integrity reference for core dataset files.",
+            "- manifest.json: Complete list of files in this ZIP and metadata.",
+        ]
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for fp in sorted(report_dir.iterdir()):
+                if not fp.is_file():
+                    continue
+                new_name = f"{prefix}_{fp.name}"
+                arcname = f"{prefix}/{new_name}"
+                zf.write(fp, arcname=arcname)
+                file_manifest.append({"source": fp.name, "archived_as": new_name, "size_bytes": fp.stat().st_size})
+
+            upload_path = self.uploads_dir / Path(filename).name
+            if upload_path.exists() and upload_path.is_file():
+                upload_arcname = f"{prefix}/input/{upload_path.name}"
+                zf.write(upload_path, arcname=upload_arcname)
+                file_manifest.append(
+                    {
+                        "source": str(upload_path),
+                        "archived_as": upload_arcname.split("/")[-1],
+                        "size_bytes": upload_path.stat().st_size,
+                    }
+                )
+                readme_lines.append("- input/<original log file>: The raw uploaded log source used for this dataset.")
+
+            session_id, session_dir = self._resolve_related_session_artifacts(filename)
+            if session_id and session_dir:
+                added = 0
+                for artifact in sorted(session_dir.iterdir()):
+                    if not artifact.is_file():
+                        continue
+                    session_arcname = f"{prefix}/session_reports/{session_id}/{artifact.name}"
+                    zf.write(artifact, arcname=session_arcname)
+                    file_manifest.append(
+                        {
+                            "source": str(artifact),
+                            "archived_as": artifact.name,
+                            "size_bytes": artifact.stat().st_size,
+                        }
+                    )
+                    added += 1
+
+                if added > 0:
+                    readme_lines.extend(
+                        [
+                            "",
+                            f"Related session artifacts included from session: {session_id}",
+                            "- session_reports/<session_id>/threat_report_*.pdf: Human-readable analysis report.",
+                            "- session_reports/<session_id>/anomaly_report_*.csv: Full anomaly export.",
+                            "- session_reports/<session_id>/*.png: Generated chart images (severity/timeline/source/MITRE).",
+                        ]
+                    )
+
+            manifest = {
+                "dataset_filename": Path(filename).name,
+                "report_id": report_id,
+                "prefix": prefix,
+                "generated_at": datetime.utcnow().isoformat(),
+                "files": file_manifest,
+            }
+            zf.writestr(f"{prefix}/README.txt", "\n".join(readme_lines) + "\n")
+            zf.writestr(f"{prefix}/manifest.json", json.dumps(manifest, indent=2))
+
+        data = payload.getvalue()
+        digest = hashlib.sha256(data).hexdigest()
+        zip_name = f"{prefix}.zip"
+        return data, digest, zip_name
+
+    def _resolve_related_session_artifacts(self, filename: str) -> tuple[Optional[str], Optional[Path]]:
+        """Pick the latest completed analysis session related to this filename, if available."""
+        try:
+            from core.database import db
+
+            rows = db.fetch_all(
+                """
+                SELECT session_id, start_time, status, parameters
+                FROM analysis_sessions
+                ORDER BY start_time DESC
+                LIMIT 50
+                """
+            )
+            safe_name = Path(filename).name
+
+            def _session_matches(params_raw: Any) -> bool:
+                if not params_raw:
+                    return False
+                try:
+                    payload = params_raw if isinstance(params_raw, dict) else json.loads(params_raw)
+                except Exception:
+                    return False
+                source = str(payload.get("log_source") or "").strip()
+                return source == safe_name
+
+            # Prefer exact source match first.
+            for row in rows:
+                if str(row.get("status") or "").lower() != "completed":
+                    continue
+                if not _session_matches(row.get("parameters")):
+                    continue
+                session_id = str(row.get("session_id") or "").strip()
+                if not session_id:
+                    continue
+                session_dir = settings.REPORTS_DIR / session_id
+                if session_dir.exists() and session_dir.is_dir():
+                    return session_id, session_dir
+
+            # Fallback: latest completed session with existing artifact folder.
+            for row in rows:
+                if str(row.get("status") or "").lower() != "completed":
+                    continue
+                session_id = str(row.get("session_id") or "").strip()
+                if not session_id:
+                    continue
+                session_dir = settings.REPORTS_DIR / session_id
+                if session_dir.exists() and session_dir.is_dir():
+                    return session_id, session_dir
+        except Exception as exc:
+            logger.warning(f"Could not resolve related session artifacts: {exc}")
+        return None, None
+
+    def resolve_report_directory(self, filename: str, report_id: str) -> Path:
+        reports = self.list_reports(filename)
+        target = next((r for r in reports if r.get("report_id") == report_id), None)
+        if not target:
+            raise FileNotFoundError("Report not found")
+        report_dir = Path(target["report_dir"])
+        if not report_dir.exists():
+            raise FileNotFoundError("Report directory missing")
+        return report_dir
+
+    def resolve_report_file(self, filename: str, report_id: str, requested_file: str) -> Path:
+        report_dir = self.resolve_report_directory(filename, report_id)
+        safe_file = Path(requested_file).name
+        file_path = (report_dir / safe_file).resolve()
+        if not file_path.exists() or report_dir.resolve() not in file_path.parents:
+            raise FileNotFoundError("Report file not found")
+        return file_path
 
 dataset_service = DatasetService()

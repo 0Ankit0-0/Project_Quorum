@@ -126,9 +126,9 @@ export default function Reports() {
 
   return (
     <AppLayout title="Reports" subtitle="Dataset-scoped report bundles with secure downloads">
-      <div className="space-y-6">
-        <div className="cyber-card p-5 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+      <div className="space-y-4">
+        <div className="cyber-card p-4 space-y-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
             <div className="md:col-span-2">
               <label className="text-xs text-muted-foreground uppercase tracking-wide block mb-2">Dataset File</label>
               <select
@@ -144,7 +144,7 @@ export default function Reports() {
                 ))}
               </select>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 justify-end">
               <button
                 onClick={() => void loadReports(selectedFile)}
                 className="px-3 py-2 rounded-md text-xs font-semibold flex items-center gap-1.5 border border-border hover:border-cyan/40"
@@ -155,7 +155,7 @@ export default function Reports() {
               <button
                 onClick={() => void handleGenerate()}
                 disabled={!selectedFile || generating}
-                className="px-3 py-2 rounded-md text-xs font-semibold disabled:opacity-60"
+                className="px-3 py-2 rounded-md text-xs font-semibold disabled:opacity-60 min-w-[92px]"
                 style={{ background: "hsl(var(--cyan))", color: "hsl(var(--background))" }}
               >
                 {generating ? "Generating..." : "Generate"}
@@ -163,7 +163,7 @@ export default function Reports() {
             </div>
           </div>
 
-          <div className="text-xs font-mono text-muted-foreground flex gap-5 flex-wrap">
+          <div className="text-xs font-mono text-muted-foreground flex gap-4 flex-wrap">
             <span>Uploaded: {selectedMeta ? formatDate(selectedMeta.uploaded_at) : "-"}</span>
             <span>Records: {(selectedMeta?.record_count ?? 0).toLocaleString()}</span>
             <span>DB: {selectedMeta?.dataset_id ?? "N/A"}</span>
@@ -171,7 +171,7 @@ export default function Reports() {
         </div>
 
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="cyber-card overflow-hidden">
-          <div className="px-5 py-4 border-b border-border">
+          <div className="px-4 py-3 border-b border-border">
             <h3 className="text-sm font-semibold">Generated Reports</h3>
             <p className="text-xs text-muted-foreground">
               {loading ? "Loading..." : `${reports.length} report bundle(s) for selected dataset`}
@@ -184,7 +184,7 @@ export default function Reports() {
                   {["Dataset (report_id)", "Created", "Integrity", "Actions"].map((h) => (
                     <th
                       key={h}
-                      className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+                      className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide"
                     >
                       {h}
                     </th>
@@ -194,39 +194,39 @@ export default function Reports() {
               <tbody>
                 {reports.map((r) => (
                   <tr key={r.report_id} className="table-row-cyber border-b border-border/50 last:border-0">
-                    <td className="px-4 py-3 font-mono text-xs text-foreground">
+                    <td className="px-3 py-2.5 font-mono text-xs text-foreground">
                       {selectedFile} ({r.report_id})
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                    <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
                       {formatDate(r.created_at)}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-cyan">{r.hash_sha256}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 flex-wrap">
+                    <td className="px-3 py-2.5 font-mono text-xs text-cyan">{r.hash_sha256}</td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           onClick={() => void handleDownloadSingle(r.report_id, "summary.json")}
-                          className="text-xs flex items-center gap-1.5 px-2 py-1 rounded border border-border hover:border-cyan/40"
+                          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-border hover:border-cyan/40"
                         >
                           <FileJson className="w-3.5 h-3.5" />
                           Summary
                         </button>
                         <button
                           onClick={() => void handleDownloadSingle(r.report_id, "anomalies.csv")}
-                          className="text-xs flex items-center gap-1.5 px-2 py-1 rounded border border-border hover:border-cyan/40"
+                          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-border hover:border-cyan/40"
                         >
                           <FileSpreadsheet className="w-3.5 h-3.5" />
                           Anomalies
                         </button>
                         <button
                           onClick={() => void handleDownloadSingle(r.report_id, "ai_analysis.json")}
-                          className="text-xs flex items-center gap-1.5 px-2 py-1 rounded border border-border hover:border-cyan/40"
+                          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-border hover:border-cyan/40"
                         >
                           <Download className="w-3.5 h-3.5" />
                           AI
                         </button>
                         <button
                           onClick={() => void handleDownloadZip(r.report_id)}
-                          className="text-xs flex items-center gap-1.5 px-2 py-1 rounded border border-cyan/40 text-cyan"
+                          className="text-xs flex items-center gap-1 px-2 py-1 rounded border border-cyan/40 text-cyan"
                         >
                           <FileArchive className="w-3.5 h-3.5" />
                           ZIP
@@ -237,7 +237,7 @@ export default function Reports() {
                 ))}
                 {!loading && reports.length === 0 && (
                   <tr>
-                    <td className="px-4 py-4 text-xs text-muted-foreground" colSpan={4}>
+                    <td className="px-3 py-3 text-xs text-muted-foreground" colSpan={4}>
                       No report bundles generated for this dataset.
                     </td>
                   </tr>

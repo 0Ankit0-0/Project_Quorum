@@ -3,11 +3,8 @@ Report Generation Routes
 """
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
-import hashlib
 import io
 from pathlib import Path
-from typing import Optional
-import zipfile
 
 from models.schemas import ReportGenerationRequest
 from services.report_service import report_service
@@ -136,41 +133,31 @@ async def list_dataset_reports(filename: str):
 async def download_dataset_report_file(filename: str, report_id: str, file: str = "summary.json"):
     safe_name = Path(filename).name
     safe_file = Path(file).name
-    reports = dataset_service.list_reports(safe_name)
-    target = next((r for r in reports if r.get("report_id") == report_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Report not found")
-    report_dir = Path(target["report_dir"])
-    file_path = (report_dir / safe_file).resolve()
-    if not file_path.exists() or report_dir.resolve() not in file_path.parents:
-        raise HTTPException(status_code=404, detail="Report file not found")
-    return FileResponse(str(file_path), filename=safe_file)
+    try:
+        file_path = dataset_service.resolve_report_file(safe_name, report_id, safe_file)
+        return FileResponse(str(file_path), filename=safe_file)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/datasets/{filename}/{report_id}/download-all")
 async def download_dataset_report_zip(filename: str, report_id: str):
     safe_name = Path(filename).name
-    reports = dataset_service.list_reports(safe_name)
-    target = next((r for r in reports if r.get("report_id") == report_id), None)
-    if not target:
-        raise HTTPException(status_code=404, detail="Report not found")
-    report_dir = Path(target["report_dir"])
-    if not report_dir.exists():
-        raise HTTPException(status_code=404, detail="Report directory missing")
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for fp in report_dir.iterdir():
-            if fp.is_file():
-                zf.write(fp, arcname=fp.name)
-    payload = buf.getvalue()
-    bundle_hash = hashlib.sha256(payload).hexdigest()
+    try:
+        report_dir = dataset_service.resolve_report_directory(safe_name, report_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
+    payload, bundle_hash, zip_name = dataset_service.build_report_archive(
+        filename=safe_name,
+        report_id=report_id,
+        report_dir=report_dir,
+    )
     out = io.BytesIO(payload)
     headers = {
-        "Content-Disposition": f'attachment; filename="report_{report_id}.zip"',
+        "Content-Disposition": f'attachment; filename="{zip_name}"',
         "X-Integrity-SHA256": bundle_hash,
     }
     from fastapi.responses import StreamingResponse
-
     return StreamingResponse(out, media_type="application/zip", headers=headers)

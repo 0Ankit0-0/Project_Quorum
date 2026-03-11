@@ -1,5 +1,8 @@
 import { apiClient } from "./api";
 
+const LONG_REQUEST_TIMEOUT_MS = 15 * 60 * 1000;
+const MEDIUM_REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
+
 export interface UploadedFile {
   filename: string;
   size_bytes: number;
@@ -103,6 +106,7 @@ export interface SessionData {
   duration_seconds: number;
   created_at: string;
   status: string;
+  source_filename?: string;
 }
 
 export interface NodeData {
@@ -301,6 +305,7 @@ interface BackendSession {
   created_at?: string;
   start_time?: string;
   status?: string;
+  source_filename?: string;
 }
 
 interface BackendAnomaly {
@@ -358,12 +363,16 @@ const mapTimelineFromAnomalies = (
 };
 
 export const getUploadedFiles = async (): Promise<UploadedFilesResponse> => {
-  const response = await apiClient.get<UploadedFilesResponse>("/logs/uploaded-files");
+  const response = await apiClient.get<UploadedFilesResponse>("/logs/uploaded-files", {
+    timeout: MEDIUM_REQUEST_TIMEOUT_MS,
+  });
   return response.data;
 };
 
 export const runAnalysis = async (request: AnalysisRequest) => {
-  const response = await apiClient.post("/analysis/run", request);
+  const response = await apiClient.post("/analysis/run", request, {
+    timeout: LONG_REQUEST_TIMEOUT_MS,
+  });
   return response.data;
 };
 
@@ -380,6 +389,7 @@ export const uploadLogFile = async (
 
   const response = await apiClient.post("/logs/ingest", form, {
     headers: { "Content-Type": "multipart/form-data" },
+    timeout: LONG_REQUEST_TIMEOUT_MS,
     onUploadProgress: (event) => {
       if (!event.total || !onProgress) return;
       onProgress(Math.round((event.loaded / event.total) * 100));
@@ -534,6 +544,7 @@ export const getSessions = async (limit = 20): Promise<SessionData[]> => {
     duration_seconds: Number(item.duration_seconds ?? 0),
     created_at: toIsoString(item.created_at ?? item.start_time),
     status: String(item.status ?? "COMPLETED").toUpperCase(),
+    source_filename: String(item.source_filename ?? ""),
   }));
 };
 
@@ -934,6 +945,22 @@ export const exportSystemLog = async (
   size_bytes: number;
 }> => {
   const response = await apiClient.post("/system/logs/export", null, {
+    params: { passphrase, encrypt },
+  });
+  return response.data;
+};
+
+export const exportAllReportsBundle = async (
+  passphrase: string,
+  encrypt = false,
+): Promise<{
+  filename: string;
+  path: string;
+  sha256: string;
+  encrypted: boolean;
+  size_bytes: number;
+}> => {
+  const response = await apiClient.post("/system/reports/export-all", null, {
     params: { passphrase, encrypt },
   });
   return response.data;

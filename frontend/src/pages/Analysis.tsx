@@ -336,6 +336,9 @@ export default function Analysis() {
                       {s.algorithm}
                     </span>
                   </div>
+                  <p className="text-xs text-muted-foreground mb-1 truncate">
+                    Source: {s.source_filename || "unknown"}
+                  </p>
                   <div className="flex items-center gap-4 text-xs text-muted-foreground">
                     <span>{formatNumber(s.total_logs)} logs</span>
                     <span className="text-cyber-critical font-semibold">

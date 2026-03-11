@@ -138,6 +138,18 @@ async def export_system_logs(passphrase: str, encrypt: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/reports/export-all")
+async def export_all_reports(passphrase: str, encrypt: bool = False):
+    try:
+        result = settings_service.export_all_reports_bundle(passphrase=passphrase, encrypt=encrypt)
+        return result
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    except Exception as e:
+        logger.error(f"Reports export failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/logs/export/{filename}")
 async def download_exported_system_logs(filename: str):
     safe_name = Path(filename).name
