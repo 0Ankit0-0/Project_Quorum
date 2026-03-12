@@ -16,14 +16,19 @@ python -m pip install pyinstaller
 
 Push-Location ..
 try {
-  pyinstaller --noconfirm --onefile `
-    --name quorum-backend `
-    --add-data "data;data" `
-    --add-data "logs;logs" `
-    --add-data "reports_output;reports_output" `
-    run_backend.py
-  Copy-Item -Force "dist\\quorum-backend.exe" $OutputDir
-  Write-Host "Copied backend exe to $OutputDir\\quorum-backend.exe" -ForegroundColor Green
+pyinstaller --noconfirm --onefile `
+  --name quorum-backend `
+  --add-data "data;data" `
+  --add-data "logs;logs" `
+  --add-data "reports_output;reports_output" `
+  run_backend.py
+  $target = (rustc -Vv | Select-String "host:" | ForEach-Object { $_.Line.Split(" ")[1] })
+  if (-not $target) {
+    throw "Unable to detect Rust host target triple."
+  }
+  $targetedName = "quorum-backend-$target.exe"
+  Copy-Item -Force "dist\\quorum-backend.exe" (Join-Path $OutputDir $targetedName)
+  Write-Host "Copied backend exe to $OutputDir\\$targetedName" -ForegroundColor Green
 } finally {
   Pop-Location
 }
